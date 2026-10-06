@@ -1,12 +1,12 @@
-# Explicit OpenCode steer delivery
+# Explicit KiloCode steer delivery
 
 ## Problem
 
-When a user steers an active OpenCode thread, the correction can be stored before the old next tool starts yet still wait until that tool finishes. The user sees the old work continue instead of an immediate change of direction.
+When a user steers an active KiloCode thread, the correction can be stored before the old next tool starts yet still wait until that tool finishes. The user sees the old work continue instead of an immediate change of direction.
 
 The manual QA run in `thr_qje5cn5enq` disproved the initial wire-field-only fix. The correction was stored at `1789666802911`, but the old `sleep 20` tool started at `1789666803883` and ran to completion. The later breakfast response proved eventual delivery, not steering before the next tool.
 
-A second manual run also disproved abort/restart without workspace routing. The correction was stored at `1789667541149`, about 1.8 seconds after `sleep 20` started, but the tool still completed at `1789667559448`. OpenCode's official abort route requires a workspace-routing query. The client omitted that directory, so the targeted correction now routes every abort through the bound session directory before restarting the corrected prompt.
+A second manual run also disproved abort/restart without workspace routing. The correction was stored at `1789667541149`, about 1.8 seconds after `sleep 20` started, but the tool still completed at `1789667559448`. KiloCode's official abort route requires a workspace-routing query. The client omitted that directory, so the targeted correction now routes every abort through the bound session directory before restarting the corrected prompt.
 
 ## Acceptance criteria
 
@@ -19,32 +19,32 @@ A second manual run also disproved abort/restart without workspace routing. The 
 ## Verification
 
 - Run the targeted bridge test, typecheck, and build.
-- In a disposable BB thread, start a bounded delayed task, send a correction while it is active, and inspect the thread timeline plus OpenCode session records. The old delayed tool must not start after the correction is stored.
+- In a disposable BB thread, start a bounded delayed task, send a correction while it is active, and inspect the thread timeline plus KiloCode session records. The old delayed tool must not start after the correction is stored.
 
 ## Bounded debugging contract
 
 - Pass only if a correction interrupts `sleep 20` within 3 seconds, the corrected response starts before the original 20-second deadline, and no dinner output appears.
 - Run at most two evidence-driven implementation iterations from the workspace-routing candidate.
 - Each iteration must test one hypothesis and add a new timing or abort-result signal. Stop early if it does not.
-- If OpenCode reports a successful routed abort while the tool continues and no narrower plugin fix remains, stop as blocked at the OpenCode runtime boundary.
+- If KiloCode reports a successful routed abort while the tool continues and no narrower plugin fix remains, stop as blocked at the KiloCode runtime boundary.
 - Temporary diagnostics may contain only timestamps, session IDs, workspace routing, abort results, and restart timing. Never log prompt contents.
 
 ## Scope
 
-Change only active steering and its adjacent regression coverage. Abort/restart is allowed if the official BB and OpenCode contracts show that legacy sessions cannot preempt a pending action through prompt delivery alone. Do not add a new UI status or queued-delivery redesign. Do not commit or push unless the user asks.
+Change only active steering and its adjacent regression coverage. Abort/restart is allowed if the official BB and KiloCode contracts show that legacy sessions cannot preempt a pending action through prompt delivery alone. Do not add a new UI status or queued-delivery redesign. Do not commit or push unless the user asks.
 
 ## Bounded debugging result
 
-`BLOCKED` at the legacy OpenCode runtime boundary after the two allowed iterations.
+`BLOCKED` at the legacy KiloCode runtime boundary after the two allowed iterations.
 
-- Iteration 1, `thr_xqhtyxz3x3`, session `ses_f4f75deb5ffeBGNfXjL8uYUZl2`: routed abort stopped `sleep 20` after about 1.7 seconds and OpenCode completed the assistant message with `MessageAbortedError`. The immediate restart created no correction user message and BB recorded no final output.
+- Iteration 1, `thr_xqhtyxz3x3`, session `ses_f4f75deb5ffeBGNfXjL8uYUZl2`: routed abort stopped `sleep 20` after about 1.7 seconds and KiloCode completed the assistant message with `MessageAbortedError`. The immediate restart created no correction user message and BB recorded no final output.
 - Iteration 2, `thr_mce4v55a6a`, session `ses_f4f73ae4fffe88hl8EE19Mbk2a`: waiting until `sessionIsRunning` returned false before restart stopped the tool after about 0.6 seconds, but again created no correction user message and BB recorded no final output.
 - The tested legacy API paths can provide eventual follow-up delivery without preemption, or preemption without a reliable corrected restart. Neither meets the acceptance criteria.
-- No third plugin variation is justified by the evidence. The next investigation must target an upstream-supported atomic interrupt-and-resume contract or a full OpenCode V2 session migration.
+- No third plugin variation is justified by the evidence. The next investigation must target an upstream-supported atomic interrupt-and-resume contract or a full KiloCode V2 session migration.
 
 ## Persist-abort-replay refinement
 
-Official OpenCode source exposes a narrower legacy sequence that the prior attempts did not test. A synchronous prompt with `noReply: true` persists caller-owned message and part IDs without joining the active runner. Replaying those same IDs is idempotent because OpenCode upserts messages and parts by ID.
+Official KiloCode source exposes a narrower legacy sequence that the prior attempts did not test. A synchronous prompt with `noReply: true` persists caller-owned message and part IDs without joining the active runner. Replaying those same IDs is idempotent because KiloCode upserts messages and parts by ID.
 
 The authorized sequence is therefore:
 
@@ -59,8 +59,8 @@ Run at most two evidence-driven live iterations. Stop for reconsideration if the
 
 `STOPPED` after the two authorized live iterations. The instrumented candidate remains loaded with steer-on-Enter enabled.
 
-- Iteration 1, `thr_7zukjgcgsf`, session `ses_f4f61921cffeZMmCibZfchu5Br`: the correction persisted once, abort stopped the old tool within about 10 ms of persistence, but replay never started. OpenCode 1.18.31 emits both `session.status: idle` and `session.idle` for one abort; the bridge suppressed only one and closed the BB turn before replay.
-- Iteration 2, `thr_mq6k9zeh8k`, session `ses_f4f5eb5f4ffetR8zj8Uuy39vtH`: suppressing both documented idle events allowed replay to start a second OpenCode loop at `1789669760942`. The plugin then issued another cancel at `1789669760943`, and the corrected assistant message ended immediately with `MessageAbortedError` and no output.
+- Iteration 1, `thr_7zukjgcgsf`, session `ses_f4f61921cffeZMmCibZfchu5Br`: the correction persisted once, abort stopped the old tool within about 10 ms of persistence, but replay never started. KiloCode 1.18.31 emits both `session.status: idle` and `session.idle` for one abort; the bridge suppressed only one and closed the BB turn before replay.
+- Iteration 2, `thr_mq6k9zeh8k`, session `ses_f4f5eb5f4ffetR8zj8Uuy39vtH`: suppressing both documented idle events allowed replay to start a second KiloCode loop at `1789669760942`. The plugin then issued another cancel at `1789669760943`, and the corrected assistant message ended immediately with `MessageAbortedError` and no output.
 - Persistence remained idempotent: the database contains one correction message and one correction part. No old dinner output appeared.
 - The remaining failure is BB live-turn ownership disappearing across the expected abort boundary. The post-replay stop-overlap guard interprets that as a real stop and aborts the newly started corrected loop. This needs reconsideration of the ownership/boundary state machine before another code change.
 
@@ -80,7 +80,7 @@ Stop for reconsideration if the first run is ambiguous, more than one ownership 
 `STOPPED` at the diagnostic boundary. No transition-state fix or additional live run was attempted.
 
 - Diagnostic run `thr_6g8kwtyq6r`, session `ses_f4f4fb937ffeS0JQ3o4CEg3REl`, reconfirmed the known sequence. The correction persisted once, the old tool stopped, the corrected loop started, and the plugin cancelled that corrected loop about 2 ms later.
-- The ownership diagnostic was written to the provider bridge's in-memory debug ring. `bb opencode logs` executes its host handler in a different plugin process, so it returned no provider-process ring entries. A read-only search found no persisted copy of the diagnostic.
+- The ownership diagnostic was written to the provider bridge's in-memory debug ring. `bb kilo logs` executes its host handler in a different plugin process, so it returned no provider-process ring entries. A read-only search found no persisted copy of the diagnostic.
 - The exact failed ownership predicate is therefore unavailable. This meets the contract's ambiguous-diagnostic stop condition.
 - The instrumented candidate remains loaded from this worktree with `steerActiveThreadOnEnter` enabled. The steering bug remains unresolved. No regression tests were written or run for this refinement, and no commit or push was made.
 - Before another live run, establish one bounded diagnostic channel that is readable from the provider process. Then repeat the same single diagnostic flow rather than changing ownership logic speculatively.
@@ -99,7 +99,7 @@ Success remains user-observable: the old tool stops within 3 seconds, one correc
 
 ### Predicate diagnostic result
 
-- Setup attempt `thr_gysx8k8w8w` did not enter the flow because OpenCode rejected the unsupported `gpt-5.4-mini` model. It does not count as a diagnostic iteration.
+- Setup attempt `thr_gysx8k8w8w` did not enter the flow because KiloCode rejected the unsupported `gpt-5.4-mini` model. It does not count as a diagnostic iteration.
 - Diagnostic run `thr_ti3q5npdgv`, session `ses_f4f3ae8d7ffem9No4r5daubjeT`, produced a provider-process receipt after replay: `same=false present=false liveBoundary=true liveStopping=false currentSession=-`.
 - The live turn was settled and removed during the expected steer handoff. A genuine `thread/stop` did not cause the loss because the original live object never latched `stopping`.
 - The first targeted refinement is limited to preventing `settleIssuedTurn` from closing a live turn while its existing `steerRestart` has not finished submitting replay. The real stop path remains authoritative and unchanged.
@@ -128,14 +128,14 @@ Success remains user-observable: the old tool stops within 3 seconds, one correc
 
 ## Parent settlement-race refinement
 
-The parent thread exposed a distinct false-accept race after the successful child flow. BB received a steer at `1789673279698`, emitted `turn/input/accepted` at `1789673279912`, and completed the old turn in the same millisecond. OpenCode stored no copy of that correction. The user's resend at `1789673290428` started a new turn and is the only persisted copy.
+The parent thread exposed a distinct false-accept race after the successful child flow. BB received a steer at `1789673279698`, emitted `turn/input/accepted` at `1789673279912`, and completed the old turn in the same millisecond. KiloCode stored no copy of that correction. The user's resend at `1789673290428` started a new turn and is the only persisted copy.
 
 This refinement is intentionally narrower than a four-phase lifecycle rewrite:
 
 1. Install the existing `steerRestart` settlement hold before the first steering `await`, without enabling abort-event suppression yet.
 2. Make `settleIssuedTurn` honor that hold both at entry and after reading message history.
 3. Persist the correction, then emit `input.accepted` only after persistence succeeds.
-4. On persistence failure, clear the hold, restore the previous polling boundary, and explicitly settle if OpenCode is already idle.
+4. On persistence failure, clear the hold, restore the previous polling boundary, and explicitly settle if KiloCode is already idle.
 5. Enable abort-event suppression only when an active runner will actually be aborted.
 
 Prove behavior before changing tests. Use one fresh root BB parent and one child beneath it. Each runs a ten-second obsolete task and receives a live correction. Both corrected responses must complete without old output. Also preserve genuine Stop and persistence-failure behavior in focused checks after the live flows pass.

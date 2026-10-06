@@ -1,8 +1,8 @@
 ## Verification Result
 
 - Platform: `web`
-- Objective: prove a user can watch native child tool activity inside a running OpenCode Task card and see its final Output after completion.
-- Primary flow: spawn a real BB OpenCode thread, launch one general subagent, observe its live tool rows, wait for completion, and expand the Task Output.
+- Objective: prove a user can watch native child tool activity inside a running KiloCode Task card and see its final Output after completion.
+- Primary flow: spawn a real BB KiloCode thread, launch one general subagent, observe its live tool rows, wait for completion, and expand the Task Output.
 - Regression check: child prose stays out of nested activity; Task output appears once inside the Task card.
 - Verdict: `PASS`
 

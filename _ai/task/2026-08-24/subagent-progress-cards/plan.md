@@ -2,7 +2,7 @@
 
 ## Goal
 
-Use BB's native delegation card to show OpenCode subagent operational activity and one terminal Output without duplicate child prose.
+Use BB's native delegation card to show KiloCode subagent operational activity and one terminal Output without duplicate child prose.
 
 ## How it works
 

@@ -2,22 +2,22 @@
 
 ## Original GitHub Issue
 
-Add OpenCode subagent work to the BB chat session using native BB UI where possible. While a subagent runs, show its task and a compact stream of recent events; keep older activity collapsed; show the final output when complete. Use OpenChamber as UX reference, preserve the plugin's architecture, and keep scope small.
+Add KiloCode subagent work to the BB chat session using native BB UI where possible. While a subagent runs, show its task and a compact stream of recent events; keep older activity collapsed; show the final output when complete. Use OpenChamber as UX reference, preserve the plugin's architecture, and keep scope small.
 
 ## Acceptance Criteria
 
-- A running OpenCode subagent is represented inline in its parent BB chat session.
+- A running KiloCode subagent is represented inline in its parent BB chat session.
 - The representation identifies the subagent task and shows a bounded list of its most recent meaningful events.
 - Older events do not expand the chat indefinitely and remain available through a compact disclosure when supported by native BB UI.
 - Completion replaces or resolves live progress into one final output without duplicate chat content.
-- Missing, delayed, or unsupported subagent events degrade safely without disrupting ordinary OpenCode messages.
+- Missing, delayed, or unsupported subagent events degrade safely without disrupting ordinary KiloCode messages.
 - Existing non-subagent streaming behavior remains unchanged.
 
 ## Gherkin Happy Path
 
 ### Happy Path: Follow a subagent from work to result
 
-Given an OpenCode assistant delegates work to a subagent in a BB chat session
+Given an KiloCode assistant delegates work to a subagent in a BB chat session
 When the subagent emits work events and then completes
 Then the parent chat shows its task, a bounded view of recent activity, and one final output without flooding the transcript
 

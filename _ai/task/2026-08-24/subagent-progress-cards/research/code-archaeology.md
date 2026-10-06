@@ -1,6 +1,6 @@
 # Code archaeology
 
-- `src/map-delta.ts:198-209` already maps OpenCode `task` to BB's native `delegation` item, including child reference, label, and terminal summary.
+- `src/map-delta.ts:198-209` already maps KiloCode `task` to BB's native `delegation` item, including child reference, label, and terminal summary.
 - `src/map-delta.ts:346-391` opens/closes that item with native Bot presentation.
 - `src/bridge.ts:1121-1199` routes child-session events into the parent thread.
 - `src/bridge.ts:1442-1468` projects every child part with `parentRef`; this currently includes child text and reasoning as well as operational tool events.

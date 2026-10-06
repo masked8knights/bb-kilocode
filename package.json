@@ -2,11 +2,12 @@
   "name": "bb-plugin-kilocode",
   "version": "0.1.0",
   "license": "MIT",
-  "description": "Use Kilo Code as a native BB provider.",
+  "repository": "https://github.com/masked8knights/bb-kilocode",
+  "description": "Kilo Code as a native BB provider — run BB threads on the kilo CLI over ACP.",
   "type": "module",
   "engines": {
-    "bb": ">=0.39",
-    "bbPluginSdk": ">=0.4.16"
+    "bb": ">=0.45",
+    "bbPluginSdk": ">=0.6.15"
   },
   "bb": {
     "name": "Kilo Code",
@@ -19,9 +20,7 @@
       }
     },
     "server": "./server.ts",
-    "app": "./app.tsx",
-    "host": "./host.ts",
-    "skills": []
+    "host": "./host.ts"
   },
   "scripts": {
     "build": "bb plugin build",
@@ -29,14 +28,10 @@
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
-    "@get-bb/plugin-sdk": "0.4.16",
-    "@opencode/client": "^2.0.18",
-    "zod": "^4.3.6"
+    "@get-bb/plugin-sdk": "0.6.15"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.2.4"
   }

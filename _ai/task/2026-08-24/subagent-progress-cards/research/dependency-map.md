@@ -1,6 +1,6 @@
 # Dependency map
 
-- Producer: OpenCode child session SSE and message snapshots (`src/bridge.ts:1121-1199`, `src/bridge.ts:629-655`).
+- Producer: KiloCode child session SSE and message snapshots (`src/bridge.ts:1121-1199`, `src/bridge.ts:629-655`).
 - Normalizer: `projectChildParts` -> `mapPartDelta` (`src/bridge.ts:1442-1468`).
 - Contract: BB provider bridge `parentRef` joins nested items to the delegation; SDK docs at `node_modules/@get-bb/plugin-sdk/bundled-types/bb-plugin-sdk-provider-bridge.d.ts:2903-2907,3053-3062`.
 - Consumer: BB native timeline; no plugin React component is required.

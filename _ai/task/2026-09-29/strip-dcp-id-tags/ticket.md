@@ -1,13 +1,13 @@
 # Strip stray DCP message-ID tags from assistant replies
 
 ## Problem
-Since the OpenCode V2 migration, assistant replies in BB end with a stray paragraph like `@10@`, `@12@`, `@17@`.
+Since the KiloCode V2 migration, assistant replies in BB end with a stray paragraph like `@10@`, `@12@`, `@17@`.
 
 ## Cause (evidence)
-- `@tarquinen/opencode-dcp` 3.2.0 tags every context message with `@N@` (compact format) and tells the model not to output them.
-- Models still echo the next tag at the end of their reply (`\n\n@10@`). OpenCode stores it: `session_message` for `ses_f14b14351ffe7wx9wBjkZ3NYMx` ends in code points `a a 40 31 30 40`.
+- `@tarquinen/kilo-dcp` 3.2.0 tags every context message with `@N@` (compact format) and tells the model not to output them.
+- Models still echo the next tag at the end of their reply (`\n\n@10@`). KiloCode stores it: `session_message` for `ses_f14b14351ffe7wx9wBjkZ3NYMx` ends in code points `a a 40 31 30 40`.
 - DCP v1 removed echoes with the `experimental.text.complete` hook (`stripHallucinationsFromString`). DCP's V2 entry (`lib/v2/index.ts` `setup`) only strips the *input* (`ctx.session.hook`), so nothing cleans the *output*.
-- bb-plugin-opencode mirrors the stored text verbatim (live `session.next.text.*` -> `mapPartDelta`/`closeText`; history -> `hydrateDeltas` -> `closeText`).
+- bb-plugin-kilo mirrors the stored text verbatim (live `session.next.text.*` -> `mapPartDelta`/`closeText`; history -> `hydrateDeltas` -> `closeText`).
 - Scale: 56 of 23,527 assistant text parts, all on 09-28/09-29; 53 at the very end.
 
 ## Desired outcome
@@ -23,7 +23,7 @@ Trailing-tag-only stripping (DCP's own `COMPACT_TAG_REGEX` shape) in the plugin'
 
 ## Not covered / follow-up
 - BB's already-stored event history for old threads still holds the tag (plugin cannot rewrite it).
-- Upstream: DCP V2 needs an output-side strip; worth an issue on Opencode-DCP/opencode-dynamic-context-pruning.
+- Upstream: DCP V2 needs an output-side strip; worth an issue on KiloCode-DCP/kilo-dynamic-context-pruning.
 
 ## Result (2026-09-29)
 - Baseline replay (53 real tagged replies + 200 untagged controls, streamed at 1/3/64-char chunks + hydrate): 159 stream leaks, 159 close leaks, 53 hydrate leaks.

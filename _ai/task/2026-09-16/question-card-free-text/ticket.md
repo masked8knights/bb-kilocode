@@ -4,12 +4,12 @@ Type: Bug
 
 ## What happened
 
-BB question cards rendered by the opencode plugin never showed the free-text
-"Other…" option, even though OpenCode's `question` tool defaults `custom` to
+BB question cards rendered by the kilo plugin never showed the free-text
+"Other…" option, even though KiloCode's `question` tool defaults `custom` to
 `true` when omitted (schema annotation: "Allow typing a custom answer
 (default: true)"). The plugin flattened an absent `custom` to `false`
 (`record.custom === true`), so `allowFreeText` was false whenever the model
-didn't explicitly pass `custom: true` — the common path, since OpenCode's tool
+didn't explicitly pass `custom: true` — the common path, since KiloCode's tool
 `Prompt` parameter type doesn't even expose `custom`.
 
 Secondary: `USER_QUESTION_MAX_OPTIONS = 4` silently truncated option lists; a
@@ -17,7 +17,7 @@ Secondary: `USER_QUESTION_MAX_OPTIONS = 4` silently truncated option lists; a
 
 ## What should happen
 
-- Absent `custom` maps to free text allowed (matching OpenCode's default).
+- Absent `custom` maps to free text allowed (matching KiloCode's default).
 - When options are truncated at the 4-option cap, free text auto-enables so a
   dropped option can't strand the user.
 
@@ -28,7 +28,7 @@ Secondary: `USER_QUESTION_MAX_OPTIONS = 4` silently truncated option lists; a
 
 ## Evidence
 
-- OpenCode schema: `custom` optional, default true
+- KiloCode schema: `custom` optional, default true
   (packages/schema/src/v1/question.ts, upstream).
 - Plugin mapping: `src/questions.ts` `parseQuestion` / `toUserQuestionPayload`.
 - BB renderer honors `allowFreeText` (shows "Other…" when true); the payload
@@ -48,6 +48,6 @@ Secondary: `USER_QUESTION_MAX_OPTIONS = 4` silently truncated option lists; a
 ## Follow-up
 
 Upstream feature request for image attachments on answers:
-- OpenCode (provider contract half): https://github.com/anomalyco/opencode/issues/49405
+- KiloCode (provider contract half): https://github.com/anomalyco/kilo/issues/49405
 - get-bb/bb (card/payload half): https://github.com/get-bb/bb/issues/3795
 - Each issue cross-links the other; both must land compatibly for the feature to work end to end.
