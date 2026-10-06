@@ -1,16 +1,16 @@
 {
-  "name": "bb-plugin-opencode",
-  "version": "0.2.0",
+  "name": "bb-plugin-kilocode",
+  "version": "0.1.0",
   "license": "MIT",
-  "description": "Use OpenCode to run BB threads — with import, agents, and a restart control.",
+  "description": "Use Kilo Code as a native BB provider.",
   "type": "module",
   "engines": {
     "bb": ">=0.39",
     "bbPluginSdk": ">=0.4.16"
   },
   "bb": {
-    "name": "OpenCode",
-    "description": "Run BB threads on a detached OpenCode server.",
+    "name": "Kilo Code",
+    "description": "Run BB threads on Kilo Code.",
     "branding": {
       "icon": "./assets/icon.svg",
       "logo": {

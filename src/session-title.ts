@@ -1,19 +1,19 @@
-/** Matches OpenCode `Session.isDefaultTitle` (packages/opencode/src/session). */
+/** Matches Kilo Code `Session.isDefaultTitle` (packages/opencode/src/session). */
 const DEFAULT_TITLE =
   /^(New session - |Child session - )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
-export function isDefaultOpenCodeTitle(title: string): boolean {
+export function isDefaultKiloTitle(title: string): boolean {
   return DEFAULT_TITLE.test(title);
 }
 
-/** Root placeholder OpenCode's title agent will replace. */
-export function defaultOpenCodeRootTitle(now = new Date()): string {
+/** Root placeholder Kilo Code's title agent will replace. */
+export function defaultKiloRootTitle(now = new Date()): string {
   return `New session - ${now.toISOString()}`;
 }
 
-/** OpenCode's first-turn title agent replaces this placeholder. Do not stamp it on BB. */
-export function shouldPublishOpenCodeTitle(title: string): boolean {
-  return title.length > 0 && !isDefaultOpenCodeTitle(title);
+/** Kilo Code's first-turn title agent replaces this placeholder. Do not stamp it on BB. */
+export function shouldPublishKiloTitle(title: string): boolean {
+  return title.length > 0 && !isDefaultKiloTitle(title);
 }
 
 const GREETING =
@@ -59,11 +59,11 @@ export function fallbackSessionTitle(userText: string): string | null {
     .filter(Boolean)
     .slice(0, 6);
   const title = words.join(" ");
-  if (title.length < 2 || isDefaultOpenCodeTitle(title)) return null;
+  if (title.length < 2 || isDefaultKiloTitle(title)) return null;
   return title.length > 80 ? `${title.slice(0, 77)}...` : title;
 }
 
-/** BB already filled the row from the first prompt. Safe to replace with OpenCode's name. */
+/** BB already filled the row from the first prompt. Safe to replace with Kilo Code's name. */
 export function isPromptDerivedTitle(args: {
   title?: string | null;
   titleFallback?: string | null;
@@ -93,20 +93,20 @@ export function publishedTitleFromThreadEvents(events: unknown): string | null {
     };
     if (record.type !== "thread/name/updated") continue;
     const name = record.data?.threadName ?? record.threadName;
-    if (typeof name !== "string" || !shouldPublishOpenCodeTitle(name)) continue;
+    if (typeof name !== "string" || !shouldPublishKiloTitle(name)) continue;
     return name;
   }
   return null;
 }
 
-export async function persistPublishedOpenCodeTitle(args: {
+export async function persistPublishedKiloTitle(args: {
   providerId: string | null | undefined;
   title: string | null | undefined;
   titleFallback?: string | null;
   listEvents: () => Promise<unknown>;
   updateTitle: (title: string) => Promise<void>;
 }): Promise<boolean> {
-  if (args.providerId !== "opencode") return false;
+  if (args.providerId !== "kilocode") return false;
   const current = args.title?.trim() ?? "";
   if (
     current &&

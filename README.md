@@ -1,74 +1,28 @@
-# bb-opencode
+# bb-kilocode
 
-First-class OpenCode provider for [BB](https://github.com/get-bb/bb).
+First-class Kilo Code provider for [BB](https://github.com/get-bb/bb).
 
-This is **not** BB’s built-in ACP guest (`acp-opencode` / plugin `provider-acp`). That path runs `opencode acp`. This plugin talks to OpenCode V2's shared background service (the one the OpenCode TUI uses) as provider id `opencode`, shown in the picker as **OpenCode**. Existing ACP threads stay ACP; they are not migrated.
-
-One shared OpenCode background service per host; the plugin attaches to it, or starts it with `opencode serve --service` if none is running. BB threads bind 1:1 to OpenCode sessions. Work is scoped to the project directory. Import is a button you press. Deleting a BB thread does not delete the OpenCode session.
+This plugin talks to Kilo Code as provider id `kilocode`, shown in the picker as **Kilo Code**.
 
 ## What you can do
 
-Pick **OpenCode** and use it like Claude-in-BB.
-
-**Chat**
-- New thread creates an OpenCode session. Resume is that same session (history is not replayed). If it is still running, BB joins it.
-- Stop interrupts the parent and any live Task children.
-- Rename in BB writes the title to OpenCode. OpenCode’s own title replaces “New session”; a title you set in BB is kept.
-- Follow-ups while a turn is running queue, unless BB’s “steer active thread on Enter” is on, then they inject.
-- BB project instructions go with the prompt.
-
-**Model and agent**
-- Model picker lists providers you already authenticated in OpenCode. If you don’t pick one, OpenCode’s configured default is used. Reasoning effort is whatever that model actually offers.
-- Thread context meter (tokens vs window). Last assistant bubble shows model, reasoning, and agent.
-- Agent chip: `build` / `plan` / `orchestrator` and other listed primaries. Change applies on the **next send**, not mid-stream. Default under Tools → OpenCode (needed on iOS). Hidden on ACP OpenCode threads.
-- `@name` in the prompt mentions an agent or subagent. It is sent as text; the plugin does not rewrite it into a Task.
-
-**Commands and skills**
-- BB’s `/` picker reads `~/.config/opencode/{commands,skills}` and `.opencode/{commands,skills}`.
-- `/compact` or `/summarize` compacts. OpenCode auto-compact is not run twice.
-- BB project skills are listed in the prompt. This plugin does not write `opencode.json`.
-
-**Permissions and questions**
-- Modes: Accept edits / Approve for me / Full access. The footer choice applies on the next OpenCode ask. BB is a ceiling; OpenCode’s once/always and `opencode.json` still apply. Unknown asks are never auto-approved.
-- Allow / Deny / Always on BB’s card for bash, file edits, and other tools. Allow and bash output stay on one row.
-- Agent questions show as BB pickers.
-
-**History**
+- Pick **Kilo Code** and use it in BB threads.
+- Model picker lists providers you already authenticated in Kilo Code.
+- Thread context meter (tokens vs window).
+- Agent chip: `build` / `plan` / `orchestrator` and other listed primaries.
+- BB's `/` picker reads Kilo Code commands.
+- `/compact` or `/summarize` compacts.
+- Modes: Accept edits / Approve for me / Full access.
+- Allow / Deny / Always on BB's card for bash, file edits, and other tools.
+- Streaming text and thinking. Live bash. File reads, edits/diffs, search/glob, web search/fetch.
 - Native **Fork** (checkpoint) and **Edit** (resend from that turn).
-- On web: **Revert from here** on a bubble rewinds the OpenCode thread in place; **Redo** in the composer dock. Hidden messages after revert.
-
-**Files**
-- Attach local files and images. One unsupported type fails the whole send. A slash plus an attachment is a normal prompt, not a command.
-
-**Timeline**
-- Streaming text and thinking. Live bash. File reads, edits/diffs, search/glob, web search/fetch. Retries and errors show as themselves. (OpenCode V2 has no todo tool, so there are no plan steps.)
-- Task / `@subagent` work is a nested card on the **parent**. Child thinking and prose stay off the parent. Open a Task child as its own thread when you choose; it is not auto-created.
-
-**Import**
-- Tools → OpenCode → Import. Lists sessions only after you open it. Running, already-imported, or missing-directory sessions are blocked. Idle Task children are pre-checked when present; otherwise parents are. Importing a parent does not pull in its children.
-
-**Auth and health**
-- `opencode auth` on this machine, then send again.
-- Tools → OpenCode: binary, version, attach state, port. Reload restarts the shared service only when no OpenCode session is running. CLI below. Override the binary with `OPENCODE_BIN`.
-
-## What is left out
-
-Still true from V1, plus a few later cuts.
-
-- Not the ACP guest. No migration of `acp-opencode` threads.
-- OpenCode CLI updates: plugin footer control (and Settings → Updates) start BB’s provider-installation run on the enrolled host. Disk install does not restart servers; Tools → OpenCode offers restart-to-apply for an idle BB-owned serve only. No login or account quota from BB. No `bb opencode restart`.
-- No service tiers. No thread archive.
-- No auto-import. No header “Open Task”. No custom Task card.
-- Agent picker does not list subagents. Changing the chip does not interrupt the current turn.
-- Native **iOS app** does not run plugin UI: no Agent chip, slash banner, or bubble Revert/Redo. Pick OpenCode, send as usual, long-press **Fork** or **Edit**, answer Allow/Deny on the native card, set default agent in Tools → OpenCode. The mobile PWA is the web app (compact composers use a banner above the prompt).
-- OpenCode TUI/desktop, MCP/LSP settings, session share, worktrees, background Task, and keybinds stay in OpenCode.
-- OpenChamber chrome is not this plugin (goals, multi-run, fusion, walkthrough, preview, relay, second transcript).
-- Pinned to OpenCode `2.x`. Out-of-window servers are rejected.
+- Import sessions from Kilo Code.
+- `bb kilocode status|version|logs|commands [directory]` CLI commands.
 
 ## Requirements
 
 - BB `>=0.39` / plugin SDK `>=0.4.16`
-- OpenCode `>=2.0.0 <3.0.0` (client pin `@opencode/client` `2.0.18`)
+- Kilo Code installed and authenticated on the enrolled host.
 
 ## Install
 
@@ -85,18 +39,18 @@ For the local-path install above:
 git pull --ff-only
 npm install
 bb plugin build
-bb plugin reload opencode
+bb plugin reload kilocode
 ```
 
-If you installed from a tracking Git URL instead, run `bb plugin update opencode`.
+If you installed from a tracking Git URL instead, run `bb plugin update kilocode`.
 
 ## Operator commands
 
 ```sh
-bb opencode status
-bb opencode version
-bb opencode logs
-bb opencode commands [directory]
+bb kilocode status
+bb kilocode version
+bb kilocode logs
+bb kilocode commands [directory]
 ```
 
 ## Layout

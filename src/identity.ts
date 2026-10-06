@@ -1,5 +1,5 @@
-export const PROVIDER_ID = "opencode" as const;
-export const PROVIDER_DISPLAY_NAME = "OpenCode";
+export const PROVIDER_ID = "kilocode" as const;
+export const PROVIDER_DISPLAY_NAME = "Kilo Code";
 export const SDK_PIN = "2.0.18";
 export const SERVER_VERSION_MIN = "2.0.0";
 export const SERVER_VERSION_MAX_EXCLUSIVE = "3.0.0";
@@ -26,7 +26,7 @@ export function compareVersionStrings(
 }
 
 export function versionSkewMessage(serverVersion: string): string {
-  return `OpenCode server ${serverVersion} is outside the pinned window ${SERVER_VERSION_MIN}–<${SERVER_VERSION_MAX_EXCLUSIVE} (SDK ${SDK_PIN}).`;
+  return `Kilo Code server ${serverVersion} is outside the pinned window ${SERVER_VERSION_MIN}–<${SERVER_VERSION_MAX_EXCLUSIVE} (SDK ${SDK_PIN}).`;
 }
 
 export function isSystemAgentName(name: string): boolean {

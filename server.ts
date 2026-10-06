@@ -33,7 +33,7 @@ import { classifyImportRow } from "./src/import-row.js";
 import { listAgentMentions, mentionResolveContext } from "./src/mentions.js";
 import {
   isPromptDerivedTitle,
-  persistPublishedOpenCodeTitle,
+  persistPublishedKiloTitle,
 } from "./src/session-title.js";
 import { sessionIdFromThreadEvents } from "./src/session-bind.js";
 import {
@@ -143,10 +143,10 @@ export default async function plugin(bb: BbPluginApi) {
     experimental_visibility: "always",
     experimental_resolvesNativeRoots: true,
     strings: {
-      signInHint: "Run `opencode auth` on this machine, then send again.",
-      expiredHint: "OpenCode auth expired. Run `opencode auth` and send again.",
-      installUrl: "https://opencode.ai/docs",
-      brandPrefix: "OpenCode ",
+      signInHint: "Run `kilo auth` on this machine, then send again.",
+      expiredHint: "Kilo Code auth expired. Run `kilo auth` and send again.",
+      installUrl: "https://kilo.ai/docs",
+      brandPrefix: "Kilo Code ",
     },
     env: { passthrough: ["OPENCODE_BIN"] },
     deriveProviderOptions(ctx) {
@@ -224,7 +224,7 @@ export default async function plugin(bb: BbPluginApi) {
       if (!hostId) throw new Error("No enrolled host");
       const agents = await loadAgents(host, hostId);
       if (!listSelectablePrimaries(agents).some((item) => item.name === agent)) {
-        throw new Error(`Unknown OpenCode primary agent: ${agent}`);
+        throw new Error(`Unknown Kilo Code primary agent: ${agent}`);
       }
       await bb.storage.kv.set(DEFAULT_AGENT_KEY, agent);
       configuredAgent = agent;
@@ -263,7 +263,7 @@ export default async function plugin(bb: BbPluginApi) {
       if (result.needsConfiguration) {
         bb.status.needsConfiguration(
           result.error ??
-            "OpenCode is missing or outside the pinned version window.",
+            "Kilo Code is missing or outside the pinned version window.",
         );
       }
       return result;
@@ -421,7 +421,7 @@ export default async function plugin(bb: BbPluginApi) {
             status: "unknown" as const,
             agent: hydrated.agent,
             options,
-            error: `Unknown OpenCode agent: ${hydrated.agent}. Pick a listed agent before sending.`,
+            error: `Unknown Kilo Code agent: ${hydrated.agent}. Pick a listed agent before sending.`,
           };
         }
         return {
@@ -804,28 +804,28 @@ export default async function plugin(bb: BbPluginApi) {
   bb.onDispose(stopTaskPoll);
 
   bb.cli.register({
-    name: "opencode",
-    summary: "Check and manage the OpenCode server",
+    name: "kilocode",
+    summary: "Check and manage the Kilo Code server",
     commands: [
       {
         name: "status",
-        summary: "Show whether OpenCode is running and how to reach it",
-        usage: "bb opencode status",
+        summary: "Show whether Kilo Code is running and how to reach it",
+        usage: "bb kilocode status",
       },
       {
         name: "version",
-        summary: "Show which OpenCode version is connected",
-        usage: "bb opencode version",
+        summary: "Show which Kilo Code version is connected",
+        usage: "bb kilocode version",
       },
       {
         name: "logs",
-        summary: "Show recent OpenCode activity and errors",
-        usage: "bb opencode logs",
+        summary: "Show recent Kilo Code activity and errors",
+        usage: "bb kilocode logs",
       },
       {
         name: "commands",
-        summary: "List the slash commands OpenCode offers",
-        usage: "bb opencode commands [directory]",
+        summary: "List the slash commands Kilo Code offers",
+        usage: "bb kilocode commands [directory]",
       },
     ],
     async run(argv) {
