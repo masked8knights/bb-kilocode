@@ -9,13 +9,11 @@ import { writeFakeKilo } from "./helpers/fake-kilo";
 
 let directory: string;
 let kilo: string;
-let usageFile: string;
 let driver: AcpDriver | undefined;
 
 beforeEach(() => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), "kilocode-proxy-"));
   kilo = writeFakeKilo(directory);
-  usageFile = path.join(directory, "usage.jsonl");
 });
 
 afterEach(() => {
@@ -27,14 +25,16 @@ afterEach(() => {
 const launch = () => {
   driver = new AcpDriver({
     KILO_BIN: kilo,
-    KILO_USAGE_FILE: usageFile,
     KILO_ADAPTER_LOG: path.join(directory, "adapter.log"),
+    // HOME points into the sandbox, so anything the adapter writes by
+    // default would land under the temp directory — where the test looks.
+    HOME: directory,
   });
   return driver;
 };
 
 describe("ACP proxy", () => {
-  it("runs a whole turn against the CLI and journals one generation fact per turn", async () => {
+  it("runs a whole turn against the CLI", async () => {
     const acp = launch();
 
     const init = await acp.request("initialize", {
@@ -81,26 +81,11 @@ describe("ACP proxy", () => {
     const exit = await acp.shutdown();
     expect(exit.code).toBe(0);
 
-    const lines = fs
-      .readFileSync(usageFile, "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    expect(lines).toHaveLength(2);
-
-    expect(lines[0].kind).toBe("generation");
-    expect(lines[0].fact.provider).toBe("kilocode");
-    expect(lines[0].fact.model).toBe("kilo-auto/free");
-    expect(lines[0].fact.cwd).toBe(cwd);
-    expect(lines[0].fact.session_id).toBe(session.sessionId);
-    expect(lines[0].fact.input_tokens).toBe(1200);
-    expect(lines[0].fact.cache_read_tokens).toBe(400);
-    expect(lines[0].fact.output_tokens).toBe(48); // 40 output + 8 thought
-    expect(lines[0].fact.created_at_ms).toBeGreaterThan(1_700_000_000_000);
-    // first turn added cost; the second billed the same running total
-    expect(lines[0].fact.total_cost).toBe(0.5);
-    expect(lines[1].fact.total_cost).toBeNull();
-    expect(lines[1].fact.input_tokens).toBe(1200);
+    // This plugin writes no usage ledger: Kilo Code's own store is the
+    // usage source, and a second one would double-count. HOME points into
+    // the sandbox, so anything the adapter wrote would land here.
+    expect(fs.existsSync(path.join(directory, ".kilocode", "usage.jsonl"))).toBe(false);
+    expect(fs.existsSync(path.join(directory, ".kilocode"))).toBe(false);
   });
 
   it("passes every line through unchanged in both directions", async () => {
@@ -121,12 +106,10 @@ describe("ACP proxy", () => {
   it("refuses to start when the CLI is missing, with a message that names no version", async () => {
     const result = await runAdapter([], {
       KILO_BIN: path.join(directory, "not-kilo"),
-      KILO_USAGE_FILE: usageFile,
     });
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("kilo CLI not found");
     expect(result.stderr).toMatch(/kilo\.ai\/cli\/install/u);
     expect(result.stderr).not.toMatch(/\d+\.\d+\.\d+/u);
-    expect(fs.existsSync(usageFile)).toBe(false);
   });
 });

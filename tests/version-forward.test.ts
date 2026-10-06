@@ -21,7 +21,6 @@ afterEach(() => {
 
 const env = (overrides: Record<string, string> = {}) => ({
   KILO_ADAPTER_LOG: path.join(directory, "adapter.log"),
-  KILO_USAGE_FILE: path.join(directory, "usage.jsonl"),
   ...overrides,
 });
 

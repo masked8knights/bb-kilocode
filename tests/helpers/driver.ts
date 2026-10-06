@@ -8,8 +8,9 @@ export const ADAPTER = path.join(REPO_ROOT, "adapter", "acp.mjs");
 
 export interface FakeKiloEnv {
   KILO_BIN: string;
-  KILO_USAGE_FILE: string;
   KILO_ADAPTER_LOG?: string;
+  /** Anything else merged over the parent environment (HOME, XDG_…, …). */
+  [key: string]: string | undefined;
 }
 
 interface Pending {

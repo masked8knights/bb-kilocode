@@ -4,10 +4,10 @@
 // Speaks the Agent Client Protocol over stdio (what BB's ACP provider bridge
 // launches) and drives the Kilo Code CLI's own `kilo acp` server as a child
 // process on stdio. Every JSON-RPC line is forwarded byte-for-byte in both
-// directions — this process observes traffic, it does not translate it — and
-// journals one `{"kind":"generation","fact":{...}}` line per settled turn into
-// ~/.kilocode/usage.jsonl (adapter/usage.mjs), because the kilo CLI keeps no
-// usage ledger of its own in a stable, parseable shape.
+// directions — this process observes nothing and translates nothing, so Kilo
+// Code's own capabilities reach BB unmodified. Usage accounting lives in
+// Kilo Code's own store (BB's usage plugin reads it from there), so this
+// adapter writes no ledger of its own.
 //
 // Usage:
 //   node adapter/acp.mjs              ACP stdio server (launched by BB)
@@ -18,13 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  appendUsageLine,
-  buildUsageFact,
-  defaultUsageFile,
-  hasUsage,
-  usageLine,
-} from "./usage.mjs";
+import { resolveKiloBin } from "./kilo-bin.mjs";
 
 // ---------------------------------------------------------------------------
 // logging — stdout is the ACP channel, so diagnostics go to a file
@@ -48,36 +42,6 @@ const log = (msg, extra) => {
 // rather than a number lifted out of the error text.
 const KILO_MISSING =
   "kilo CLI not found on this machine: set KILO_BIN to its path, or install it from https://kilo.ai/cli/install";
-
-// ---------------------------------------------------------------------------
-// kilo binary
-// ---------------------------------------------------------------------------
-const isExecutable = (candidate) => {
-  try {
-    fs.accessSync(candidate, fs.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-function resolveKiloBin(env, homedir) {
-  const source = env ?? process.env;
-  const home = homedir ?? os.homedir();
-  const override = (source.KILO_BIN || "").trim();
-  // An explicit override is honored exactly: a wrong path must fail loudly
-  // instead of silently running a different kilo than the operator named.
-  if (override !== "") return isExecutable(override) ? override : null;
-  const dataHome = (source.XDG_DATA_HOME || "").trim() || path.join(home, ".local", "share");
-  const candidates = [path.join(home, ".kilo", "bin", "kilo"), path.join(dataHome, "kilo", "bin", "kilo")];
-  for (const candidate of candidates) if (isExecutable(candidate)) return candidate;
-  for (const dir of (source.PATH || "").split(path.delimiter)) {
-    if (dir === "") continue;
-    const candidate = path.join(dir, "kilo");
-    if (isExecutable(candidate)) return candidate;
-  }
-  return null;
-}
 
 const argv = process.argv.slice(2);
 if (argv.length > 0 && ["--version", "-v", "-V"].includes(argv[0])) {
@@ -105,153 +69,6 @@ if (kiloBin === null) {
 }
 
 // ---------------------------------------------------------------------------
-// observed state
-// ---------------------------------------------------------------------------
-// sessionId -> { cwd, model, cost, promptCostBaseline }
-const sessions = new Map();
-// request id -> { method, params }
-const pending = new Map();
-
-const num = (value) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
-
-const modelFromConfigOptions = (configOptions) => {
-  if (!Array.isArray(configOptions)) return undefined;
-  const model = configOptions.find((option) => option && option.id === "model");
-  return typeof model?.currentValue === "string" ? model.currentValue : undefined;
-};
-
-const touchSession = (sessionId, patch) => {
-  if (typeof sessionId !== "string" || sessionId === "") return;
-  const existing = sessions.get(sessionId) || { cwd: undefined, model: undefined, cost: 0 };
-  sessions.set(sessionId, { ...existing, ...patch });
-};
-
-/**
- * Journal the turn that just settled. Tokens come from the prompt result;
- * cost is the delta of the session-cumulative figure kilo reports in
- * `usage_update`, recorded only when it actually grew (a free tier reports
- * 0, and null is more honest than an invented number).
- */
-function recordTurn(sessionId, result) {
-  try {
-    const usage = result && result.usage;
-    if (!hasUsage(usage)) return;
-    const session = sessions.get(sessionId);
-    const baseline = num(session && session.promptCostBaseline);
-    const cost = num(session && session.cost);
-    const fact = buildUsageFact({
-      usage,
-      model: session && session.model,
-      cwd: session && session.cwd,
-      sessionId,
-      costDelta: cost - baseline,
-    });
-    const file = defaultUsageFile();
-    appendUsageLine(file, usageLine(fact));
-    if (session) session.promptCostBaseline = cost;
-    log("usage recorded", {
-      file,
-      model: fact.model,
-      input_tokens: fact.input_tokens,
-      output_tokens: fact.output_tokens,
-      total_cost: fact.total_cost,
-    });
-  } catch (error) {
-    // Never let the journal break the turn.
-    log("usage record failed", { error: String((error && error.message) || error) });
-  }
-}
-
-function observeClientLine(line) {
-  let message;
-  try {
-    message = JSON.parse(line);
-  } catch {
-    return;
-  }
-  if (!message || typeof message !== "object") return;
-  if (message.method === "session/prompt") {
-    // A prompt starting resets the cost baseline its result is measured against.
-    const session = sessions.get(message.params && message.params.sessionId);
-    if (session) session.promptCostBaseline = num(session.cost);
-  }
-  if (typeof message.method === "string" && message.id !== undefined) {
-    pending.set(message.id, { method: message.method, params: message.params });
-  }
-}
-
-function observeClientResponse(message) {
-  const request = pending.get(message.id);
-  if (request === undefined) return;
-  pending.delete(message.id);
-  if (message.error !== undefined) return;
-
-  const result = message.result;
-  const params = request.params || {};
-  if (request.method === "session/new") {
-    touchSession(result && result.sessionId, {
-      cwd: typeof params.cwd === "string" ? params.cwd : undefined,
-      model: modelFromConfigOptions(result && result.configOptions),
-      cost: 0,
-      promptCostBaseline: 0,
-    });
-    return;
-  }
-  if (request.method === "session/fork" || request.method === "session/resume") {
-    touchSession(result && result.sessionId, {
-      cwd: typeof params.cwd === "string" ? params.cwd : undefined,
-      model: modelFromConfigOptions(result && result.configOptions),
-      cost: 0,
-      promptCostBaseline: 0,
-    });
-    return;
-  }
-  if (request.method === "session/set_config_option" && params.configId === "model") {
-    if (typeof params.value === "string") touchSession(params.sessionId, { model: params.value });
-    return;
-  }
-  if (request.method === "session/set_model") {
-    if (typeof params.modelId === "string") touchSession(params.sessionId, { model: params.modelId });
-    return;
-  }
-  if (request.method === "session/prompt") recordTurn(params.sessionId, result);
-}
-
-function observeAgentLine(line) {
-  let message;
-  try {
-    message = JSON.parse(line);
-  } catch {
-    return;
-  }
-  if (!message || typeof message !== "object") return;
-
-  if (message.method === undefined && message.id !== undefined) {
-    observeClientResponse(message);
-    return;
-  }
-  if (message.method !== "session/update") return;
-  const params = message.params || {};
-  const update = params.update;
-  if (!update || typeof update !== "object") return;
-
-  if (update.sessionUpdate === "usage_update") {
-    const amount = update.cost && update.cost.amount;
-    if (typeof amount === "number" && Number.isFinite(amount)) {
-      touchSession(params.sessionId, { cost: amount });
-    }
-    return;
-  }
-  if (update.sessionUpdate !== "config_option_update") return;
-  const option = update.configOption;
-  if (option && option.id === "model" && typeof option.currentValue === "string") {
-    touchSession(params.sessionId, { model: option.currentValue });
-  } else if (option === undefined && Array.isArray(update.configOptions)) {
-    touchSession(params.sessionId, { model: modelFromConfigOptions(update.configOptions) });
-  }
-}
-
-// ---------------------------------------------------------------------------
 // proxy
 // ---------------------------------------------------------------------------
 log("starting", { kilo: kiloBin, adapter: fileURLToPath(import.meta.url) });
@@ -265,6 +82,8 @@ child.on("error", (error) => {
   process.exit(1);
 });
 
+// Line-oriented pass-through: stdin is forwarded as soon as a newline lands
+// so a long prompt never waits on the child's own buffering.
 let stdinBuffer = "";
 process.stdin.on("data", (chunk) => {
   stdinBuffer += chunk.toString("utf8");
@@ -272,7 +91,6 @@ process.stdin.on("data", (chunk) => {
   while ((index = stdinBuffer.indexOf("\n")) >= 0) {
     const line = stdinBuffer.slice(0, index + 1);
     stdinBuffer = stdinBuffer.slice(index + 1);
-    observeClientLine(line);
     if (child.stdin.writable) child.stdin.write(line);
   }
 });
@@ -288,7 +106,6 @@ child.stdout.on("data", (chunk) => {
   while ((index = stdoutBuffer.indexOf("\n")) >= 0) {
     const line = stdoutBuffer.slice(0, index + 1);
     stdoutBuffer = stdoutBuffer.slice(index + 1);
-    observeAgentLine(line);
     process.stdout.write(line);
   }
 });
@@ -310,7 +127,6 @@ function exitWith(code) {
   if (stdoutBuffer !== "") {
     const tail = stdoutBuffer;
     stdoutBuffer = "";
-    observeAgentLine(tail);
     process.stdout.write(tail, () => done());
     return;
   }

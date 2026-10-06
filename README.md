@@ -61,35 +61,35 @@ KILO_BIN=/opt/kilo/bin/kilo bb plugin reload kilocode   # non-default CLI path
 bb plugin logs kilocode                                  # adapter + registration log
 ```
 
-### Usage ledger
+### Usage reporting
 
-Every settled turn appends one line to `~/.kilocode/usage.jsonl`
-(`KILO_USAGE_FILE` overrides the path):
+Kilo Code meters tokens, not accounts: there is no quota endpoint to call, so
+BB's provider panel shows
 
-```json
-{"kind":"generation","fact":{"provider":"kilocode","model":"kilo-auto/free","created_at_ms":1770000000000,"input_tokens":10926,"cache_read_tokens":2048,"output_tokens":44,"total_cost":null,"cwd":"/home/you/project","session_id":"ses_..."}}
+```
+Kilo Code does not expose account quota.
 ```
 
-Numbers come from the ACP prompt result, not an estimate. `total_cost` is the
-session-cumulative cost the turn added and stays `null` while the CLI reports
-zero — Kilo's free tier reports no spend, and null is more honest than an
-invented price. The file is written only by this plugin; nothing in it leaves
-the machine.
+That answer comes from this plugin (`provider/usage`, see *How it works*), and
+it is the whole usage story this plugin tells — it writes no ledger of its own.
+Token and cost history lives in Kilo Code's own store
+(`~/.local/share/kilo/kilo.db`), which BB's usage collector reads directly.
+Nothing this plugin handles leaves the machine.
 
 ## How it works
 
 ```
 BB ── ACP (stdio) ──> adapter/acp.mjs ── ACP (stdio) ──> kilo acp
-                          │
-                          └── appends one generation fact per turn
 ```
 
 - `server.ts` registers `kilocode` and declares the launch spec: the generic
   ACP dialect, `adapter/acp.mjs` as the command, and the primary model group.
-- `host.ts` re-exports BB's published ACP bridge, so the `bb.host` artifact BB
-  ships to hosts runs that bridge.
+- `host.ts` runs BB's published ACP bridge and answers the two sessionless
+  maintenance probes itself: `provider/usage` (no quota API) and
+  `provider/health` (the resolved `kilo` binary's own version, so BB shows
+  Kilo Code's version rather than the launcher's).
 - `adapter/acp.mjs` spawns `kilo acp` and forwards every JSON-RPC line
-  byte-for-byte in both directions. It observes — never translates — the
+  byte-for-byte in both directions. It neither observes nor translates the
   traffic, so Kilo Code's own capabilities (fork, resume, model options,
   streaming, tool calls) reach BB unmodified.
 
@@ -99,15 +99,14 @@ retry loop.
 
 ## Honest limits
 
-- **Health** — BB's `provider/health` probes the launch command. That command
-  is the adapter, whose `--version` forwards to `kilo --version`, so a machine
-  with Kilo Code reports `7.8.3`. On a checkout that lost its executable bit
-  the adapter is launched as `node <adapter>`, and the probe then reads Node's
-  version instead. If `kilo` disappears after install, health still says ready
-  while turns fail with the CLI-missing message.
+- **Health** — `provider/health` resolves the same binary the adapter spawns
+  (`KILO_BIN`, then `~/.kilo/bin/kilo`, then `PATH`) and asks it `--version`,
+  so a machine with Kilo Code reports `7.8.3` whatever launches the adapter.
+  The provider declares no installer (`installation: false`): install or
+  update Kilo Code yourself, then reload the plugin.
 - **Usage windows** — Kilo Code publishes no quota endpoint, so
-  `provider/usage` honestly answers "unsupported"; the local journal above is
-  the usage story.
+  `provider/usage` answers that explicitly instead of inventing a number.
+  See *Usage reporting* above.
 - **Compaction** — `/compact` reaches Kilo Code as an ordinary prompt and does
   not compact, so the manual-compact affordance stays off.
 - **Plan mode** — Kilo Code's `plan` session mode is not wired to BB's plan
@@ -126,9 +125,10 @@ npm test            # vitest
 npm run build       # bb plugin build → dist/
 ```
 
-Tests cover the registration contract, the usage mapping, and the adapter
-proxy driven end to end against a fake `kilo` (`--version`, initialize,
-session, two prompts, journal).
+Tests cover the registration contract, the `provider/health` and
+`provider/usage` answers, Kilo Code branding, and the adapter proxy driven end
+to end against a fake `kilo` (`--version`, initialize, session, two prompts) —
+including that a run of turns leaves no usage ledger behind.
 
 ## License
 
