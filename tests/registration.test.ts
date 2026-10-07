@@ -1,3 +1,7 @@
+import fs from "node:fs";
+
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 import plugin from "../server";
@@ -93,7 +97,7 @@ describe("provider registration", () => {
     expect(declaration.capabilities).toEqual({
       supportsServiceTier: false,
       supportsNativeUserQuestion: false,
-      fork: "tip",
+      fork: "checkpoint",
       supportsManualCompaction: false,
       supportsThreadArchive: false,
       supportsThreadRename: false,
@@ -102,6 +106,32 @@ describe("provider registration", () => {
     });
     expect(declaration.composerActions).toEqual([]);
     expect(declaration.completedTurnDisplay).toBe("flat");
+  });
+
+  it("opens bb thread edit-message, whose gate is fork === checkpoint", async () => {
+    const declaration = await registration();
+    // The server derives supportsSessionRewind from this declaration alone;
+    // at fork: "tip" the command fails with HTTP 409 "Editing messages is
+    // not supported for kilocode".
+    expect(declaration.capabilities.fork).toBe("checkpoint");
+    // The edit that needs no provider checkpoint is the thread's first
+    // message: BB deletes the turn suffix and issues thread.start with
+    // fork: null, so the ACP bridge starts a fresh kilo session carrying
+    // only the replacement prompt. Later messages are refused by BB, which
+    // publishes no providerCheckpointId here, rather than replayed.
+    expect(declaration.capabilities.fork !== "none").toBe(true);
+  });
+
+  it("never answers the bridge handshake itself, so no rewind is claimed twice", async () => {
+    // host.ts pulls only provider/usage and provider/health out of the line
+    // stream; `initialize` still reaches the ACP kit and reports fork:
+    // "tip". The declaration above opens BB's edit affordance, the handshake
+    // keeps telling the truth about what kilo's ACP layer can clone.
+    const host = fs.readFileSync(
+      fileURLToPath(new URL("../host.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(host).not.toMatch(/["'`]initialize["'`]/u);
   });
 
   it("points sign-in, expiry and install copy at the kilo CLI", async () => {

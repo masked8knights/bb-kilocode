@@ -45,8 +45,8 @@ bb plugin reload kilocode
 
 ## Usage
 
-- **Provider** — *Kilo Code* in the thread's provider picker. Threads, forks,
-  and edits behave like any other BB provider.
+- **Provider** — *Kilo Code* in the thread's provider picker. Threads and
+  forks behave like any other BB provider; edits are covered below.
 - **Models** — the picker opens on Kilo's own router (`kilo-auto/free` is the
   default), with the rest of the 300+ model catalog behind "more models". The
   choice is applied to the session through Kilo's own model option, so the
@@ -54,6 +54,17 @@ bb plugin reload kilocode
 - **Permissions** — Accept edits / Full access. Tool approvals still arrive as
   BB cards.
 - **Fork** — tip forks work (`session/fork`); rewind to a checkpoint does not.
+- **Edit** — `bb thread edit-message` rebuilds the thread from the edited
+  message: BB deletes the turn suffix and starts a fresh Kilo session
+  carrying only the replacement prompt, so the history really is rebuilt
+  rather than replayed. On a multi-turn thread the editable message is
+  therefore the **first** one. Naming a later message with
+  `--expected-request-sequence` is refused with *"This earlier provider turn
+  has no editable history checkpoint"*; with no sequence BB edits the latest
+  *eligible* message (its documented contract) — the first — and the turns
+  after it go with it. Kilo's ACP layer clones a session only at its tip and
+  this plugin publishes no `providerCheckpointId`, so there is no session
+  state to rewind to the turn before an edit.
 - **Sign in** — `kilo auth login` on the machine running the thread.
 
 ```sh
@@ -115,6 +126,18 @@ retry loop.
 - **Reasoning level** — Kilo Code's ACP session exposes a single Effort value
   (`thinking`), so the picker offers one rung instead of a ladder it cannot
   honor.
+- **Message edits** — the declaration says `fork: "checkpoint"`, which is the
+  flag BB gates `bb thread edit-message` on, and the edit it can then run
+  really does rebuild history: BB drops the turn suffix and starts a fresh
+  Kilo session with only the replacement prompt. What cannot run is choosing
+  a *later* message as the edit target — no `providerCheckpointId` is ever
+  published and Kilo's ACP `session/fork` takes no head, so there is no
+  session state to rewind to the turn before an edit. Naming such a message
+  with `--expected-request-sequence` is refused by BB; without a sequence BB
+  edits the latest eligible message, so on a multi-turn thread that is the
+  first one and the turns after it are dropped. Every refusal happens before
+  the provider is touched: nothing is replayed, and nothing is reported as
+  edited that did not happen.
 
 ## Development
 
@@ -125,8 +148,9 @@ npm test            # vitest
 npm run build       # bb plugin build → dist/
 ```
 
-Tests cover the registration contract, the `provider/health` and
-`provider/usage` answers, Kilo Code branding, and the adapter proxy driven end
+Tests cover the registration contract (including the `fork` value behind
+BB's edit-message gate), the `provider/health` and `provider/usage` answers,
+Kilo Code branding, and the adapter proxy driven end
 to end against a fake `kilo` (`--version`, initialize, session, two prompts) —
 including that a run of turns leaves no usage ledger behind.
 

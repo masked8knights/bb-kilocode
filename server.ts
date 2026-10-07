@@ -103,8 +103,30 @@ export default async function plugin(bb: BbPluginApi) {
     capabilities: {
       supportsServiceTier: false,
       supportsNativeUserQuestion: false,
-      // kilo acp advertises session/fork (tip only — no checkpoint rewind).
-      fork: "tip",
+      // `fork` is BB's edit gate: the server derives
+      // `supportsSessionRewind = fork === "checkpoint"` from this
+      // declaration alone, and `bb thread edit-message` 409s with "Editing
+      // messages is not supported for kilocode" while it is anything else.
+      //
+      // "checkpoint" is honest for the edit BB can actually run here. Editing
+      // the thread's *first* user message needs no provider checkpoint:
+      // BB deletes the whole turn suffix and issues `thread.start` with
+      // `fork: null`, which the ACP bridge answers with a brand-new kilo
+      // session carrying only the replacement prompt — the history really is
+      // rebuilt, not replayed.
+      //
+      // A later message cannot be the edit target, and BB says so rather
+      // than half-doing it: this plugin publishes no `providerCheckpointId`
+      // on `turn/completed`, so naming one with --expected-request-sequence
+      // is refused with "This earlier provider turn has no editable history
+      // checkpoint". With no sequence BB edits the latest *eligible*
+      // message — its documented contract — which on a multi-turn thread is
+      // the first one, and the turns after it go with it. Kilo's ACP layer
+      // clones a session only at its tip (`session/fork` takes no head), so
+      // there is no session state to rewind to the turn before an edit. The
+      // bridge handshake keeps reporting `fork: "tip"`; we never claim a
+      // rewind we cannot perform.
+      fork: "checkpoint",
       // `/compact` reaches kilo as an ordinary prompt today: it does not
       // compact, so the affordance stays off.
       supportsManualCompaction: false,
