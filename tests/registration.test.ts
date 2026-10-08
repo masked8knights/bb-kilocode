@@ -1,9 +1,11 @@
 import fs from "node:fs";
+import path from "node:path";
 
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { STATE_DIR_ENV, stateDirFrom } from "../adapter/checkpoint.mjs";
 import plugin from "../server";
 
 type Declaration = Record<string, any>;
@@ -68,6 +70,12 @@ describe("provider registration", () => {
     expect(command.length).toBeGreaterThan(0);
     expect(args.length === 0 || args[0].endsWith("adapter/acp.mjs")).toBe(true);
     expect(args.length === 0 || command === process.execPath).toBe(true);
+    // The checkpoint registry directory travels in the launch env: the adapter
+    // (which publishes counts) and host.ts (which resolves checkpoints) must
+    // agree on it even when their processes inherit different TMPDIRs.
+    expect(Object.keys(options.acpLaunchSpec.env ?? {})).toEqual([STATE_DIR_ENV]);
+    expect(options.acpLaunchSpec.env[STATE_DIR_ENV]).toBe(stateDirFrom(process.env));
+    expect(path.isAbsolute(options.acpLaunchSpec.env[STATE_DIR_ENV])).toBe(true);
   });
 
   it("offers kilo-auto/free as the default and keeps the rest of the router first", async () => {
@@ -114,19 +122,25 @@ describe("provider registration", () => {
     // at fork: "tip" the command fails with HTTP 409 "Editing messages is
     // not supported for kilocode".
     expect(declaration.capabilities.fork).toBe("checkpoint");
-    // The edit that needs no provider checkpoint is the thread's first
-    // message: BB deletes the turn suffix and issues thread.start with
-    // fork: null, so the ACP bridge starts a fresh kilo session carrying
-    // only the replacement prompt. Later messages are refused by BB, which
-    // publishes no providerCheckpointId here, rather than replayed.
+    // "checkpoint" is not aspirational: host.ts stamps a
+    // providerCheckpointId (`<sessionId>#<userCount>`) onto every settled
+    // turn boundary from the adapter's registry, and answers bb's rewind
+    // prepare by staging a rebuild the adapter runs on the replacement
+    // thread. So editing the first message (bb restarts the session, no
+    // checkpoint needed) and editing any later one (rewind to the turn
+    // before it, history retained) both work; only a count Kilo's store
+    // never confirmed (`seeded:false`) falls back to bb's honest 409.
     expect(declaration.capabilities.fork !== "none").toBe(true);
   });
 
-  it("never answers the bridge handshake itself, so no rewind is claimed twice", async () => {
-    // host.ts pulls only provider/usage and provider/health out of the line
-    // stream; `initialize` still reaches the ACP kit and reports fork:
-    // "tip". The declaration above opens BB's edit affordance, the handshake
-    // keeps telling the truth about what kilo's ACP layer can clone.
+  it("never answers the ACP handshake itself, only its outgoing fork answer", async () => {
+    // The `initialize` request still reaches the ACP kit — host.ts must not
+    // grow a handler that answers it, or two answers would travel on one
+    // stream. What host.ts does rewrite, on the way out, is the kit's
+    // `capabilities.fork: "tip"` result: bb takes the minimum of this
+    // declaration and the handshake, and prepareThreadRewind throws below
+    // "checkpoint", so the upgrade is what opens the edit affordance this
+    // test's sibling asserts.
     const host = fs.readFileSync(
       fileURLToPath(new URL("../host.ts", import.meta.url)),
       "utf8",

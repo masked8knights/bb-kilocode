@@ -53,18 +53,15 @@ bb plugin reload kilocode
   terminal and BB agree.
 - **Permissions** — Accept edits / Full access. Tool approvals still arrive as
   BB cards.
-- **Fork** — tip forks work (`session/fork`); rewind to a checkpoint does not.
-- **Edit** — `bb thread edit-message` rebuilds the thread from the edited
-  message: BB deletes the turn suffix and starts a fresh Kilo session
-  carrying only the replacement prompt, so the history really is rebuilt
-  rather than replayed. On a multi-turn thread the editable message is
-  therefore the **first** one. Naming a later message with
-  `--expected-request-sequence` is refused with *"This earlier provider turn
-  has no editable history checkpoint"*; with no sequence BB edits the latest
-  *eligible* message (its documented contract) — the first — and the turns
-  after it go with it. Kilo's ACP layer clones a session only at its tip and
-  this plugin publishes no `providerCheckpointId`, so there is no session
-  state to rewind to the turn before an edit.
+- **Fork** — `bb thread fork` works both ways: from a checkpoint (the fork
+  starts at that turn, with the history before it retained) and at the tip
+  (`session/fork`, Kilo's own clone).
+- **Edit** — `bb thread edit-message` works on **any** message: the edited
+  turn is rebuilt from the checkpoint before it, with every earlier message
+  carried over as real prior context, and the turns after the edited one are
+  re-run from there. Editing the first message needs no checkpoint at all (BB
+  restarts the session). What is never replayed blind is a history the plugin
+  could not confirm — see *Editing earlier messages, rewind, and forks* below.
 - **Sign in** — `kilo auth login` on the machine running the thread.
 
 ```sh
@@ -98,15 +95,74 @@ BB ── ACP (stdio) ──> adapter/acp.mjs ── ACP (stdio) ──> kilo ac
 - `host.ts` runs BB's published ACP bridge and answers the two sessionless
   maintenance probes itself: `provider/usage` (no quota API) and
   `provider/health` (the resolved `kilo` binary's own version, so BB shows
-  Kilo Code's version rather than the launcher's).
+  Kilo Code's version rather than the launcher's). It also performs the two
+  checkpoint interceptions described below: stamping outgoing turn
+  boundaries and staging a rewind.
 - `adapter/acp.mjs` spawns `kilo acp` and forwards every JSON-RPC line
-  byte-for-byte in both directions. It neither observes nor translates the
-  traffic, so Kilo Code's own capabilities (fork, resume, model options,
-  streaming, tool calls) reach BB unmodified.
+  byte-for-byte in both directions, so Kilo Code's own capabilities (fork,
+  resume, model options, streaming, tool calls) reach BB unmodified. On top
+  of that passthrough it only *observes* traffic — to publish checkpoint
+  counts — and answers exactly one request itself, the `session/fork` of a
+  staged rewind that Kilo's tip-only clone could never run.
 
 The CLI's HTTP mode (`kilo serve`) is deliberately not used: ACP over stdio is
 the CLI's native control surface, and it needs no port, no client SDK, and no
 retry loop.
+
+## Editing earlier messages, rewind, and forks (checkpoints)
+
+Kilo's ACP `session/fork` clones a session only at its tip — there is no head
+parameter — so rewinding to an earlier turn is rebuilt from Kilo Code's own
+store instead. Three pieces cooperate over one registry: a directory of JSON
+records, one file per id, under `BB_KILO_STATE_DIR` (default
+`$TMPDIR/bb-kilo-state`).
+
+1. **Publish** (`adapter/acp.mjs`) — on `session/new`, on prompt arrival, when
+   a prompt settles, and on `session/load`/`session/fork`, the adapter counts
+   the session's `role:"user"` messages in Kilo's own store
+   (`~/.local/share/kilo/kilo.db`) and writes a live record under both the
+   session id and the bb thread id:
+   `{kind:"live", sessionId, bbThreadId, cwd, userCount, seeded, updatedAt}`.
+   The count is taken with the same definition `kilo export` truncation uses,
+   so a checkpoint can never cut a different set of messages than the one it
+   was counted from.
+2. **Stamp** (`host.ts`) — the settled recount runs *before* the prompt
+   response is forwarded, i.e. before BB's bridge emits that turn's
+   `thread/delta` `turn.boundary`; host.ts attaches
+   `providerCheckpointId = "<sessionId>#<userCount>"` to every boundary that
+   does not carry one already. It also rewrites the bridge's hardcoded
+   `fork: "tip"` handshake result to `checkpoint` — BB takes the minimum of
+   the registration and the handshake, and its rewind preparation throws
+   below `checkpoint`.
+3. **Rewind** (`host.ts` → `adapter/acp.mjs`) — BB's rewind preparation sends
+   `thread/fork` with `sourceProviderCheckpointId` and a staging thread id
+   containing `:rewind:`. host.ts resolves the checkpoint against the
+   registry, writes a staged record (`{kind:"staged", sourceSessionId,
+   truncateTo, requestThreadId, createdAt}`) and answers the prepare directly
+   with `{providerThreadId: stagedId}` — no staging session is ever started.
+   When BB starts the replacement thread, that staged id arrives here as
+   `session/fork`, and the adapter answers it: `kilo export` → truncate to the
+   checkpoint's count → rewrite every id (session, messages, parts, and the
+   `parentID` chain, dropping a parent that fell outside the kept prefix) →
+   `kilo import` into the target directory → `session/load` the clone into our
+   own `kilo acp` child → respond with the new session id. Only then is the
+   staged record deleted, so a failed rebuild consumes nothing and can be
+   retried (or cleaned up by `thread/discard` if the edit is abandoned).
+
+`server.ts` pins `BB_KILO_STATE_DIR` into the launch spec's env, so the
+adapter inherits it, and `host.ts` reads the same value back from any request
+that carries the launch spec; both sides fall back to the same default when
+the variable is absent.
+
+**The honest fallback.** A count the store could not confirm publishes
+`seeded:false`, and a `seeded:false` record stamps no checkpoint: BB then
+answers its own *"This earlier provider turn has no editable history
+checkpoint"* instead of truncating history against a guess. A checkpoint whose
+registry record is gone (state dir cleared) is refused with the same error
+code and a message that says so — *"The Kilo Code session registry has no
+record of checkpoint …"* — rather than blaming fork support. Either way the
+refusal happens before the provider is touched: nothing is replayed, and
+nothing is reported as edited that did not happen.
 
 ## Honest limits
 
@@ -126,18 +182,17 @@ retry loop.
 - **Reasoning level** — Kilo Code's ACP session exposes a single Effort value
   (`thinking`), so the picker offers one rung instead of a ladder it cannot
   honor.
-- **Message edits** — the declaration says `fork: "checkpoint"`, which is the
-  flag BB gates `bb thread edit-message` on, and the edit it can then run
-  really does rebuild history: BB drops the turn suffix and starts a fresh
-  Kilo session with only the replacement prompt. What cannot run is choosing
-  a *later* message as the edit target — no `providerCheckpointId` is ever
-  published and Kilo's ACP `session/fork` takes no head, so there is no
-  session state to rewind to the turn before an edit. Naming such a message
-  with `--expected-request-sequence` is refused by BB; without a sequence BB
-  edits the latest eligible message, so on a multi-turn thread that is the
-  first one and the turns after it are dropped. Every refusal happens before
-  the provider is touched: nothing is replayed, and nothing is reported as
-  edited that did not happen.
+- **Message edits** — `bb thread edit-message` runs on any message, rebuilding
+  the turn from the checkpoint before it with the earlier history retained
+  (see the checkpoint section above). Two refusals stay honest: a count Kilo's
+  store never confirmed publishes no checkpoint (`seeded:false`), so BB answers
+  *"This earlier provider turn has no editable history checkpoint"* itself;
+  and a checkpoint whose registry record is gone is refused by this plugin
+  with the same code and a message naming the missing record. Both happen
+  before the provider is touched — nothing is cut against a guess, nothing is
+  replayed, and nothing is reported as edited that did not happen. The
+  rebuild exports and re-imports the whole transcript, so editing a turn on a
+  very large session takes a few seconds rather than an instant.
 
 ## Development
 
@@ -149,10 +204,14 @@ npm run build       # bb plugin build → dist/
 ```
 
 Tests cover the registration contract (including the `fork` value behind
-BB's edit-message gate), the `provider/health` and `provider/usage` answers,
-Kilo Code branding, and the adapter proxy driven end
-to end against a fake `kilo` (`--version`, initialize, session, two prompts) —
-including that a run of turns leaves no usage ledger behind.
+BB's edit-message gate and the launch env carrying `BB_KILO_STATE_DIR`), the
+`provider/health` and `provider/usage` answers, Kilo Code branding, the
+checkpoint registry and its outgoing rewrites (handshake upgrade, boundary
+stamping, `seeded:false` gating), the rewind primitive (`kilo export` →
+truncate → re-id, id chains and dangling parents included), and the adapter
+proxy driven end to end against a fake `kilo` (initialize, session, prompts,
+checkpoint publishing and seeding, the staged rewind rebuild, an honest
+failure path) — including that a run of turns leaves no usage ledger behind.
 
 ## License
 

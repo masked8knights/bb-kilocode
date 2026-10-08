@@ -14,10 +14,66 @@ export function writeFakeKilo(directory: string): string {
   fs.writeFileSync(
     file,
     `#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
 import process from "node:process";
 
 if (process.argv[2] === "--version") {
   process.stdout.write("7.8.3\\n");
+  process.exit(0);
+}
+
+// \`kilo export <id>\`: a four-message, two-turn transcript. Truncating to
+// turn 1 must keep the first user+assistant pair and drop the second.
+const HERE = import.meta.dirname;
+const exportFixture = {
+  info: {
+    id: "ses_source",
+    slug: "fixture-session",
+    projectID: "global",
+    directory: "/nonexistent/source-ws",
+    path: "nonexistent/source-ws",
+    title: "fixture",
+  },
+  messages: [
+    {
+      info: { id: "msg_u1", sessionID: "ses_source", role: "user", time: { created: 1 } },
+      parts: [{ type: "text", text: "first instruction", id: "prt_u1", sessionID: "ses_source", messageID: "msg_u1" }],
+    },
+    {
+      info: { id: "msg_a1", sessionID: "ses_source", parentID: "msg_u1", role: "assistant", time: { created: 2 } },
+      parts: [{ type: "text", text: "first reply", id: "prt_a1", sessionID: "ses_source", messageID: "msg_a1" }],
+    },
+    {
+      info: { id: "msg_u2", sessionID: "ses_source", parentID: "msg_a1", role: "user", time: { created: 3 } },
+      parts: [{ type: "text", text: "second instruction", id: "prt_u2", sessionID: "ses_source", messageID: "msg_u2" }],
+    },
+    {
+      info: { id: "msg_a2", sessionID: "ses_source", parentID: "msg_u2", role: "assistant", time: { created: 4 } },
+      parts: [{ type: "text", text: "second reply", id: "prt_a2", sessionID: "ses_source", messageID: "msg_a2" }],
+    },
+  ],
+};
+if (process.argv[2] === "export") {
+  // Only the fixture session can be exported — anything else is a real
+  // "unknown session" failure, the way kilo answers an id it has no record of.
+  if (process.argv[3] !== "ses_source") {
+    process.stderr.write("No session found for id " + process.argv[3] + "\\n");
+    process.exit(1);
+  }
+  process.stdout.write(JSON.stringify(exportFixture) + "\\n");
+  process.exit(0);
+}
+
+// \`kilo import <file>\`: journal what arrived (payload + the cwd the session
+// directory must come from) so tests can assert truncation and id rewrites.
+if (process.argv[2] === "import") {
+  const payload = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+  fs.writeFileSync(
+    path.join(HERE, "imported.json"),
+    JSON.stringify({ cwd: process.cwd(), data: payload }),
+  );
+  process.stdout.write("Imported session " + payload.info.id + "\\n");
   process.exit(0);
 }
 
@@ -78,6 +134,22 @@ function handle(message) {
       sessionCount += 1;
       const sessionId = "ses_" + sessionCount;
       modelBySession.set(sessionId, "kilo/google/gemini-3-pro-image");
+      costBySession.set(sessionId, 0);
+      reply(id, { sessionId, configOptions: [modelOption(modelBySession.get(sessionId))] });
+      return;
+    }
+    case "session/load": {
+      // Restoring an existing session: enough for the adapter's seeding path.
+      // The params are journalled so a test can see which id the adapter
+      // injected into us — the answer itself never reaches the bridge.
+      fs.writeFileSync(path.join(HERE, "load-params.json"), JSON.stringify(params ?? {}));
+      reply(id, {});
+      return;
+    }
+    case "session/fork": {
+      sessionCount += 1;
+      const sessionId = "ses_fork_" + sessionCount;
+      modelBySession.set(sessionId, "kilo/kilo-auto/free");
       costBySession.set(sessionId, 0);
       reply(id, { sessionId, configOptions: [modelOption(modelBySession.get(sessionId))] });
       return;

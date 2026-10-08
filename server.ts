@@ -2,14 +2,18 @@
 //
 // server.ts registers the `kilocode` provider and points BB's ACP bridge at
 // adapter/acp.mjs — a line-transparent proxy in front of `kilo acp` (the Kilo
-// CLI's stdio ACP server) that also journals one generation usage fact per
-// settled turn. host.ts re-exports the bridge kit, so the bb.host artifact BB
-// ships to hosts runs that generic ACP bridge.
+// CLI's stdio ACP server) that also publishes the checkpoint state bb's
+// edit-message/rewind/fork flow reads (adapter/checkpoint.mjs). host.ts
+// re-exports the bridge kit plus those two interceptions, so the bb.host
+// artifact BB ships to hosts runs the generic ACP bridge with them.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+
+import { STATE_DIR_ENV } from "./adapter/checkpoint.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Depending on how BB evaluates the bundle, HERE is either the plugin root
@@ -97,7 +101,16 @@ export default async function plugin(bb: BbPluginApi) {
         displayName: "Kilo Code",
         command: launch.command,
         args: launch.args,
-        env: {},
+        env: {
+          // Shared checkpoint registry between the adapter (publishes live
+          // session records, rebuilds truncated sessions in session/fork) and
+          // host.ts (stamps providerCheckpointIds onto turn boundaries,
+          // stages checkpoint forks). The bridge passes launchSpec.env to
+          // the adapter child; host.ts reads the same value back from any
+          // request that carries the launch spec. Both sides fall back to
+          // the same default when the variable is absent.
+          [STATE_DIR_ENV]: process.env[STATE_DIR_ENV] || path.join(os.tmpdir(), "bb-kilo-state"),
+        },
       },
     },
     capabilities: {
@@ -108,24 +121,20 @@ export default async function plugin(bb: BbPluginApi) {
       // declaration alone, and `bb thread edit-message` 409s with "Editing
       // messages is not supported for kilocode" while it is anything else.
       //
-      // "checkpoint" is honest for the edit BB can actually run here. Editing
-      // the thread's *first* user message needs no provider checkpoint:
-      // BB deletes the whole turn suffix and issues `thread.start` with
-      // `fork: null`, which the ACP bridge answers with a brand-new kilo
-      // session carrying only the replacement prompt — the history really is
-      // rebuilt, not replayed.
+      // "checkpoint" is what actually runs here: every settled turn's
+      // boundary carries a `providerCheckpointId` (`<sessionId>#<userCount>`,
+      // counted from Kilo Code's own store — adapter/acp.mjs), so bb rewinds
+      // to the turn before an edited message by forking from that
+      // checkpoint. The clone is rebuilt by the adapter from `kilo export`,
+      // truncated to the checkpoint's count, re-id'd, `kilo import`ed, and
+      // `session/load`ed — history is retained rather than replayed blind.
+      // That covers `bb thread edit-message` on any message (the first one
+      // needs no checkpoint at all: bb restarts the session from scratch),
+      // `bb thread rewind`, and `bb thread fork` from a checkpoint.
       //
-      // A later message cannot be the edit target, and BB says so rather
-      // than half-doing it: this plugin publishes no `providerCheckpointId`
-      // on `turn/completed`, so naming one with --expected-request-sequence
-      // is refused with "This earlier provider turn has no editable history
-      // checkpoint". With no sequence BB edits the latest *eligible*
-      // message — its documented contract — which on a multi-turn thread is
-      // the first one, and the turns after it go with it. Kilo's ACP layer
-      // clones a session only at its tip (`session/fork` takes no head), so
-      // there is no session state to rewind to the turn before an edit. The
-      // bridge handshake keeps reporting `fork: "tip"`; we never claim a
-      // rewind we cannot perform.
+      // When the registry cannot confirm a count (`seeded:false`, e.g. no
+      // Kilo store readable), no checkpoint is published and bb answers its
+      // honest 409 instead of cutting a history against a guess.
       fork: "checkpoint",
       // `/compact` reaches kilo as an ordinary prompt today: it does not
       // compact, so the affordance stays off.
