@@ -124,6 +124,23 @@ process.stdout.write = ((chunk: any, ...rest: any[]) => {
   return originalStdoutWrite(chunk, ...(rest as any[]));
 }) as typeof process.stdout.write;
 
+// Kilo Auto catalog mirrored from server.ts (models.scope: "host"). Without
+// this interception the generic ACP bridge forwards model/list to kilo's
+// ACP server, which answers with no usable catalog and the picker collapses
+// to a single "Agent default" entry.
+const MEDIUM = {
+  reasoningEffort: "medium",
+  description: "Provider default",
+} as const;
+
+const PRIMARY_MODELS: { id: string; displayName: string; description: string; isDefault: boolean }[] = [
+  { id: "kilo/kilo-auto/free", displayName: "Kilo Auto Free", description: "Kilo's automatic router on the free tier — runs without signing in.", isDefault: true },
+  { id: "kilo/kilo-auto/balanced", displayName: "Kilo Auto Balanced", description: "Automatic routing balanced across cost and capability.", isDefault: false },
+  { id: "kilo/kilo-auto/frontier", displayName: "Kilo Auto Frontier", description: "Automatic routing to Kilo's strongest available models.", isDefault: false },
+  { id: "kilo/kilo-auto/efficient", displayName: "Kilo Auto Efficient", description: "Automatic routing biased toward speed and low cost.", isDefault: false },
+  { id: "kilo/kilo-auto/small", displayName: "Kilo Auto Small", description: "Automatic routing to small, fast models.", isDefault: false },
+];
+
 // ---------------------------------------------------------------------------
 // incoming interception — thread/fork at a checkpoint and staged cleanup.
 // Returns true when the line was fully handled here (never forwarded).
@@ -236,6 +253,20 @@ const bridge = experimental_defineProviderBridge({
         }
         if (parsed.method === "provider/health") {
           void answerHealth(id);
+          return;
+        }
+        if (parsed.method === "model/list") {
+          sendResult(id, {
+            models: PRIMARY_MODELS.map((m) => ({
+              id: m.id,
+              model: m.id,
+              displayName: m.displayName,
+              description: m.description,
+              supportedReasoningEfforts: [MEDIUM],
+              defaultReasoningEffort: "medium",
+              isDefault: m.isDefault,
+            })),
+          });
           return;
         }
         if (interceptIncoming(parsed)) return;
