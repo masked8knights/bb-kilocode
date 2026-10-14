@@ -30,15 +30,22 @@ export function resolveKiloBin(env = process.env, homedir = os.homedir()) {
   // instead of silently running a different kilo than the operator named.
   if (override !== "") return isExecutable(override) ? override : null;
   const dataHome = (env.XDG_DATA_HOME || "").trim() || path.join(homedir, ".local", "share");
-  const candidates = [
-    path.join(homedir, ".kilo", "bin", "kilo"),
-    path.join(dataHome, "kilo", "bin", "kilo"),
-  ];
-  for (const candidate of candidates) if (isExecutable(candidate)) return candidate;
+  // Windows installs ship `kilo.exe` (official installer and npm shims are
+  // extensionless/.cmd — not spawnable); check the native name too.
+  const names = process.platform === "win32" ? ["kilo.exe", "kilo"] : ["kilo"];
+  const dirs = [path.join(homedir, ".kilo", "bin"), path.join(dataHome, "kilo", "bin")];
+  for (const dir of dirs) {
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      if (isExecutable(candidate)) return candidate;
+    }
+  }
   for (const dir of (env.PATH || "").split(path.delimiter)) {
     if (dir === "") continue;
-    const candidate = path.join(dir, "kilo");
-    if (isExecutable(candidate)) return candidate;
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      if (isExecutable(candidate)) return candidate;
+    }
   }
   return null;
 }

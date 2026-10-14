@@ -1,44 +1,32 @@
 // bb-kilocode — BB provider plugin: run BB threads on Kilo Code.
 //
-// server.ts registers the `kilocode` provider and points BB's ACP bridge at
-// adapter/acp.mjs — a line-transparent proxy in front of `kilo acp` (the Kilo
-// CLI's stdio ACP server) that also publishes the checkpoint state bb's
-// edit-message/rewind/fork flow reads (adapter/checkpoint.mjs). host.ts
-// re-exports the bridge kit plus those two interceptions, so the bb.host
-// artifact BB ships to hosts runs the generic ACP bridge with them.
-import fs from "node:fs";
+// server.ts registers the `kilocode` provider; host.ts is a self-contained
+// provider bridge that drives `kilo run --format json` per turn (Kilo's own
+// `kilo acp` stdio server never answers session/prompt — kilocode#10768) and
+// builds the live model catalog from `kilo models kilo --verbose`. The server
+// resolves the kilo binary and pushes it to the host through the contract in
+// contract.ts.
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 
-import { STATE_DIR_ENV } from "./adapter/checkpoint.mjs";
+import { kilocodeHostContract } from "./contract.js";
+import { resolveKiloBin } from "./adapter/kilo-bin.mjs";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-// Depending on how BB evaluates the bundle, HERE is either the plugin root
-// (source server.ts) or <plugin root>/dist (built server.js).
-const ADAPTER = [
-  path.join(HERE, "adapter", "acp.mjs"),
-  path.join(HERE, "..", "adapter", "acp.mjs"),
-].find((candidate) => fs.existsSync(candidate));
+const PROVIDER_ID = "kilocode";
+const OPTED_OUT_KEY = "optedOut";
 
-// Kilo's own automatic router. The free entry is first (and therefore the
-// default) because it is the only group that runs on a machine with no Kilo
-// credentials; every other entry of the 300+ model catalog stays reachable
-// through the picker's "more models" group.
 const PRIMARY_MODELS = [
   "kilo/kilo-auto/free",
   "kilo/kilo-auto/balanced",
   "kilo/kilo-auto/frontier",
   "kilo/kilo-auto/efficient",
   "kilo/kilo-auto/small",
-] as const;
+];
 
-const MEDIUM = {
-  reasoningEffort: "medium" as const,
-  description: "Provider default",
-};
+const MEDIUM = { reasoningEffort: "medium" as const, description: "Provider default" };
 
 const fallbackModel = (
   id: string,
@@ -54,136 +42,282 @@ const fallbackModel = (
   isDefault,
 });
 
-// The adapter carries a `#!/usr/bin/env node` shebang. When BB can execute it
-// directly it is the launch command, so `provider/health`'s `<command>
-// --version` probe runs the adapter's `--version`, which forwards to `kilo
-// --version` and reports Kilo Code's own version. On a checkout that lost the
-// executable bit we fall back to `node <adapter>`, where the health probe then
-// reports Node's version instead — see README ("Health").
-function launchCommand(): { command: string; args: string[] } {
-  if (ADAPTER === undefined) return { command: process.execPath, args: [] };
+const statusSchema = z.object({
+  providerId: z.string(),
+  enabled: z.boolean(),
+  kilo: z
+    .object({
+      path: z.string(),
+      version: z.string().optional(),
+      modelCount: z.number().optional(),
+      error: z.string().optional(),
+    })
+    .optional(),
+  kiloMissing: z.boolean(),
+});
+
+export const rpcContract = defineRpcContract({
+  status: { input: z.null(), output: statusSchema },
+});
+
+async function kiloVersion(bin: string): Promise<string | null> {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
   try {
-    fs.accessSync(ADAPTER, fs.constants.X_OK);
-    return { command: ADAPTER, args: [] };
+    const { stdout } = await promisify(execFile)(bin, ["--version"], {
+      timeout: 15_000,
+      windowsHide: true,
+    });
+    return stdout.trim().split("\n")[0] ?? null;
   } catch {
-    return { command: process.execPath, args: [ADAPTER] };
+    return null;
   }
 }
 
 export default async function plugin(bb: BbPluginApi) {
-  if (ADAPTER === undefined) {
-    throw new Error(
-      "bb-kilocode: adapter/acp.mjs is missing from this install; reinstall the plugin.",
+  const settings = bb.settings.define({
+    kiloBin: {
+      type: "string",
+      label: "kilo binary path",
+      default: "",
+      description: "Absolute path to the kilo CLI. Empty auto-detects (~/.kilo/bin, XDG data dir, PATH).",
+    },
+    model: {
+      type: "string",
+      label: "Default model id (blank = kilo/kilo-auto/free)",
+      default: "",
+    },
+  });
+
+  const hostClient = bb.hosts.experimental_client({ contract: kilocodeHostContract });
+
+  async function pushConfigToHost(hostId: string, signal: AbortSignal): Promise<void> {
+    const current = await settings.get();
+    const kiloBin =
+      current.kiloBin.trim() !== ""
+        ? current.kiloBin.trim()
+        : (resolveKiloBin(process.env, os.homedir()) ?? "kilo");
+    try {
+      await hostClient.call(
+        "setConfig",
+        { kiloBin, model: current.model.trim() || PRIMARY_MODELS[0]! },
+        { hostId, signal },
+      );
+    } catch {
+      // A disconnect can race the connected-host snapshot; the reconciler
+      // retries on the next request or host:changed event.
+    }
+  }
+
+  let requestConfigReconcile = () => {};
+  settings.onChange(() => {
+    requestConfigReconcile();
+  });
+
+  bb.background.service("host-config-reconciler", {
+    async start(signal) {
+      let reconcileRequested = true;
+      let wake: (() => void) | null = null;
+      requestConfigReconcile = () => {
+        reconcileRequested = true;
+        wake?.();
+      };
+      const unsubscribeHost = bb.sdk.subscribe({
+        event: "host:changed",
+        callback: (event) => {
+          if (event.changes.includes("host-connected")) requestConfigReconcile();
+        },
+      });
+      try {
+        while (!signal.aborted) {
+          if (reconcileRequested) {
+            reconcileRequested = false;
+            const hosts = await bb.sdk.hosts.list({ signal });
+            await Promise.all(
+              hosts
+                .filter((host) => host.status === "connected")
+                .map((host) => pushConfigToHost(host.id, signal)),
+            );
+          }
+          if (signal.aborted) break;
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+            signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+          wake = null;
+        }
+      } finally {
+        requestConfigReconcile = () => {};
+        unsubscribeHost();
+      }
+    },
+  });
+
+  let registration: { dispose(): void } | null = null;
+
+  function registerProvider(): void {
+    if (registration) return;
+    registration = bb.providers.register({
+      id: PROVIDER_ID,
+      displayName: "Kilo Code",
+      icon: "./assets/icon.svg",
+      experimental_visibility: "always",
+      maintenance: { health: true, usage: true, installation: false },
+      env: { passthrough: ["KILO_BIN"] },
+      models: {
+        scope: "host",
+        fallback: [
+          fallbackModel(
+            "kilo/kilo-auto/free",
+            "Kilo Auto Free",
+            "Kilo's automatic router on the free tier — runs without credits.",
+            true,
+          ),
+          fallbackModel(
+            "kilo/kilo-auto/balanced",
+            "Kilo Auto Balanced",
+            "Automatic routing balanced across cost and capability.",
+          ),
+          fallbackModel(
+            "kilo/kilo-auto/frontier",
+            "Kilo Auto Frontier",
+            "Automatic routing to Kilo's strongest available models.",
+          ),
+          fallbackModel(
+            "kilo/kilo-auto/efficient",
+            "Kilo Auto Efficient",
+            "Automatic routing biased toward speed and low cost.",
+          ),
+          fallbackModel(
+            "kilo/kilo-auto/small",
+            "Kilo Auto Small",
+            "Automatic routing to small, fast models.",
+          ),
+        ],
+      },
+      capabilities: {
+        supportsServiceTier: false,
+        supportsNativeUserQuestion: false,
+        // `kilo run` has no session fork/checkpoint story; history continuity
+        // comes from `--session`, edit/rewind stays off.
+        fork: "none",
+        supportsManualCompaction: false,
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ["full"],
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+      },
+      composerActions: [],
+      completedTurnDisplay: "flat",
+      strings: {
+        signInHint: "Run `kilo auth login` on this machine to sign in, then reload.",
+        expiredHint:
+          "Kilo Code credentials on this machine expired. Run `kilo auth login`, then reload.",
+        installUrl: "https://kilo.ai/cli/install",
+      },
+    });
+  }
+
+  function unregisterProvider(): void {
+    registration?.dispose();
+    registration = null;
+  }
+
+  if (await bb.storage.kv.get<boolean>(OPTED_OUT_KEY)) {
+    bb.log.info("provider registration skipped — disabled on purpose");
+  } else {
+    registerProvider();
+  }
+
+  const kiloPath = resolveKiloBin(process.env, os.homedir());
+  if (kiloPath === null) {
+    bb.status.needsConfiguration(
+      "Missing the kilo CLI. Install it with `curl -fsSL https://kilo.ai/cli/install | bash`, sign in with `kilo auth login`, then reload.",
     );
   }
 
-  const launch = launchCommand();
-  bb.log.info(`bb-kilocode loading — adapter ${ADAPTER}`);
-
-  bb.providers.register({
-    id: "kilocode",
-    displayName: "Kilo Code",
-    family: "acp",
-    icon: "./assets/icon.svg",
-    experimental_visibility: "always",
-    maintenance: {
-      health: true,
-      usage: true,
-      installation: false,
-    },
-    env: {
-      passthrough: ["KILO_BIN"],
-    },
-    experimental_bridgeOptions: {
-      acpDialect: "generic",
-      primaryModels: [...PRIMARY_MODELS],
-      acpLaunchSpec: {
-        displayName: "Kilo Code",
-        command: launch.command,
-        args: launch.args,
-        env: {
-          // Shared checkpoint registry between the adapter (publishes live
-          // session records, rebuilds truncated sessions in session/fork) and
-          // host.ts (stamps providerCheckpointIds onto turn boundaries,
-          // stages checkpoint forks). The bridge passes launchSpec.env to
-          // the adapter child; host.ts reads the same value back from any
-          // request that carries the launch spec. Both sides fall back to
-          // the same default when the variable is absent.
-          [STATE_DIR_ENV]: process.env[STATE_DIR_ENV] || path.join(os.tmpdir(), "bb-kilo-state"),
-        },
-      },
-    },
-    capabilities: {
-      supportsServiceTier: false,
-      supportsNativeUserQuestion: false,
-      // `fork` is BB's edit gate: the server derives
-      // `supportsSessionRewind = fork === "checkpoint"` from this
-      // declaration alone, and `bb thread edit-message` 409s with "Editing
-      // messages is not supported for kilocode" while it is anything else.
-      //
-      // "checkpoint" is what actually runs here: every settled turn's
-      // boundary carries a `providerCheckpointId` (`<sessionId>#<userCount>`,
-      // counted from Kilo Code's own store — adapter/acp.mjs), so bb rewinds
-      // to the turn before an edited message by forking from that
-      // checkpoint. The clone is rebuilt by the adapter from `kilo export`,
-      // truncated to the checkpoint's count, re-id'd, `kilo import`ed, and
-      // `session/load`ed — history is retained rather than replayed blind.
-      // That covers `bb thread edit-message` on any message (the first one
-      // needs no checkpoint at all: bb restarts the session from scratch),
-      // `bb thread rewind`, and `bb thread fork` from a checkpoint.
-      //
-      // When the registry cannot confirm a count (`seeded:false`, e.g. no
-      // Kilo store readable), no checkpoint is published and bb answers its
-      // honest 409 instead of cutting a history against a guess.
-      fork: "checkpoint",
-      // `/compact` reaches kilo as an ordinary prompt today: it does not
-      // compact, so the affordance stays off.
-      supportsManualCompaction: false,
-      supportsThreadArchive: false,
-      supportsThreadRename: false,
-      permissionModes: ["accept-edits", "full"],
-      // One rung: kilo's ACP session exposes a single Effort value
-      // ("thinking") and no per-level thought knob.
-      reasoningLevels: ["medium"],
-    },
-    composerActions: [],
-    completedTurnDisplay: "flat",
-    strings: {
-      signInHint: "Run `kilo auth login` on this machine to sign in, then reload.",
-      expiredHint:
-        "Kilo Code credentials on this machine expired. Run `kilo auth login`, then reload.",
-      installUrl: "https://kilo.ai/cli/install",
-    },
-    models: {
-      scope: "host",
-      fallback: [
-        fallbackModel(
-          "kilo/kilo-auto/free",
-          "Kilo Auto Free",
-          "Kilo's automatic router on the free tier — runs without signing in.",
-          true,
-        ),
-        fallbackModel(
-          "kilo/kilo-auto/balanced",
-          "Kilo Auto Balanced",
-          "Automatic routing balanced across cost and capability.",
-        ),
-        fallbackModel(
-          "kilo/kilo-auto/frontier",
-          "Kilo Auto Frontier",
-          "Automatic routing to Kilo's strongest available models.",
-        ),
-        fallbackModel(
-          "kilo/kilo-auto/efficient",
-          "Kilo Auto Efficient",
-          "Automatic routing biased toward speed and low cost.",
-        ),
-        fallbackModel(
-          "kilo/kilo-auto/small",
-          "Kilo Auto Small",
-          "Automatic routing to small, fast models.",
-        ),
-      ],
+  bb.rpc.register(rpcContract, {
+    status: async () => {
+      if (kiloPath === null) {
+        return { providerId: PROVIDER_ID, enabled: registration !== null, kiloMissing: true };
+      }
+      const version = await kiloVersion(kiloPath);
+      return {
+        providerId: PROVIDER_ID,
+        enabled: registration !== null,
+        kiloMissing: false,
+        kilo: { path: kiloPath, version: version ?? undefined, ...(version === null ? { error: "version probe failed" } : {}) },
+      };
     },
   });
+
+  bb.cli.register({
+    name: "kilocode",
+    summary: "Inspect the Kilo Code provider",
+    commands: [
+      { name: "status", summary: "Show whether the kilo CLI and provider are wired up", usage: "bb kilocode status [--json]" },
+      { name: "enable", summary: "Register the Kilo Code provider", usage: "bb kilocode enable" },
+      { name: "disable", summary: "Unregister the Kilo Code provider", usage: "bb kilocode disable" },
+    ],
+    async run(argv) {
+      const json = argv.includes("--json");
+      const positional = argv.filter((arg) => !arg.startsWith("-"));
+      const subcommand = positional[0] ?? "status";
+      try {
+        if (subcommand === "enable") {
+          await bb.storage.kv.delete(OPTED_OUT_KEY);
+          registerProvider();
+          return ok("Kilo Code provider registered.\n");
+        }
+        if (subcommand === "disable") {
+          await bb.storage.kv.set(OPTED_OUT_KEY, true);
+          unregisterProvider();
+          return ok("Kilo Code provider unregistered.\n");
+        }
+        if (subcommand !== "status") {
+          return { exitCode: 2, stderr: `Unknown subcommand "${subcommand}". Usage: bb kilocode <status|enable|disable> [--json]\n` };
+        }
+        const status = kiloPath
+          ? {
+              providerId: PROVIDER_ID,
+              enabled: registration !== null,
+              kiloMissing: false,
+              kilo: { path: kiloPath, version: (await kiloVersion(kiloPath)) ?? undefined },
+            }
+          : { providerId: PROVIDER_ID, enabled: registration !== null, kiloMissing: true };
+        if (json) return ok(JSON.stringify(status, null, 2) + "\n");
+        const lines = [
+          `Provider   ${status.providerId}  ${status.enabled ? "registered" : "not registered"}`,
+          status.kiloMissing
+            ? "kilo       MISSING — curl -fsSL https://kilo.ai/cli/install | bash"
+            : `kilo       ${status.kilo?.path}${status.kilo?.version ? ` (${status.kilo.version})` : ""}`,
+        ];
+        return ok(lines.join("\n") + "\n");
+      } catch (error) {
+        return { exitCode: 1, stderr: `${(error as Error).message}\n` };
+      }
+    },
+  });
+
+  bb.agents.configure((context) => {
+    if (context.provider.id !== PROVIDER_ID) {
+      return { tools: [], skills: [] };
+    }
+    return {
+      tools: [],
+      skills: [],
+      instructions:
+        "You are running through Kilo Code's `kilo run` CLI. Each turn is one non-interactive " +
+        "kilo run call continuing the same kilo session (--session); tool activity and reasoning " +
+        "stay inside Kilo Code, and only the assistant's final text reaches this turn. Finish the " +
+        "user's whole task within one reply: kilo run ends the turn when its process exits, so do " +
+        "not stop while something is still running.\n",
+    };
+  });
+
+  bb.log.info(`ready (kilo: ${kiloPath ?? "missing"})`);
+}
+
+function ok(stdout: string): { exitCode: number; stdout: string } {
+  return { exitCode: 0, stdout: stdout.endsWith("\n") ? stdout : `${stdout}\n` };
 }

@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { REPO_ROOT } from "./helpers/driver";
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 // Assembled at runtime so this file itself does not contain the literal it
 // searches for.
